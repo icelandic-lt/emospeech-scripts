@@ -69,6 +69,8 @@ from collections import Counter
 import os
 import shutil
 import re
+import soundfile as sf
+from tqdm import tqdm
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Organize voice recordings")
@@ -81,7 +83,9 @@ def parse_arguments():
     parser.add_argument("--verbose", action="store_true", help="Display detailed statistics at the end")
     parser.add_argument("--force", action="store_true", help="Overwrite destination directory without prompting")
     parser.add_argument("--zero-emotion", help="Comma-separated list of emotions to set intensity to 0")
+    parser.add_argument("--flac", action="store_true", help="Convert audio files to FLAC format")
     return parser.parse_args()
+
 
 def read_script(script_path, is_emotion=True):
     script_data = {}
@@ -113,9 +117,14 @@ def create_directory_structure(dest_dir, emotions, addenda):
     for emotion in emotions + addenda:
         os.makedirs(os.path.join(dest_dir, emotion), exist_ok=True)
 
-def process_files(source_dir, dest_dir, orig_name, dest_name, emotion_script, addenda_script, addenda, zero_emotions):
+def process_files(source_dir, dest_dir, orig_name, dest_name, emotion_script, addenda_script, addenda, zero_emotions, use_flac):
     index_data = []
     file_counts = Counter()
+
+    total_files = sum(len([f for f in os.listdir(os.path.join(source_dir, subdir)) if f.endswith('.wav')])
+                      for subdir in os.listdir(source_dir) if subdir.startswith(orig_name))
+
+    pbar = tqdm(total=total_files, desc="Processing files", unit="file")
 
     for subdir in os.listdir(source_dir):
         if not subdir.startswith(orig_name):
@@ -150,16 +159,24 @@ def process_files(source_dir, dest_dir, orig_name, dest_name, emotion_script, ad
                 if emotion in zero_emotions:
                     intensity = '0'
 
-            new_file_name = f'{dest_name}_{emotion}_{file_counter:03d}.wav'
+            new_file_name = f'{dest_name}_{emotion}_{file_counter:03d}.{"flac" if use_flac else "wav"}'
             dest_path = os.path.join(dest_dir, dest_subdir, new_file_name)
 
-            shutil.copy2(src_path, dest_path)
+            if use_flac:
+                data, samplerate = sf.read(src_path)
+                sf.write(dest_path, data, samplerate)
+            else:
+                shutil.copy2(src_path, dest_path)
 
             relative_path = new_file_name
             index_data.append(f'{relative_path}\t{dest_name}\t{dest_subdir}\t{intensity}\t{utterance}\n')
 
             file_counter += 1
             file_counts[dest_subdir] += 1
+
+            pbar.update(1)
+
+    pbar.close()
 
     return index_data, file_counts
 
@@ -191,7 +208,7 @@ def main():
     create_directory_structure(args.dest, emotions, addenda)
 
     zero_emotions = args.zero_emotion.split(',') if args.zero_emotion else []
-    index_data, file_counts = process_files(args.source, args.dest, args.orig_name, args.dest_name, emotion_script, addenda_script, addenda, zero_emotions)
+    index_data, file_counts = process_files(args.source, args.dest, args.orig_name, args.dest_name, emotion_script, addenda_script, addenda, zero_emotions, args.flac)
     write_index_file(args.dest, index_data)
 
     print(f"Voice recordings organized successfully. Output directory: {args.dest}")
