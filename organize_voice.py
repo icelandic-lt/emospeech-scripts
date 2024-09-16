@@ -31,9 +31,11 @@
 #
 # The file index.tsv structure is as follows:
 #
-#       <relative_path_to_audio_file> \t <voice-name> \t  <utterance text> \t <emotion> \t <Intensity level 1-5>
+#       <basename_of_audio_file_in_subdirectory> \t <voice-name> \t <emotion> \t <Intensity level 1-5> \t  <utterance text>
 #
-# The structure of the source files directory is as follows:
+# The relative filename of each audio file can be reconstructed from <emotion>/<basename_of_audio_file_in_subdirectory>.
+#
+# The structure of the source directory is as follows:
 #
 #  data_directory /
 #    |
@@ -49,11 +51,11 @@
 # The single unique-id fields of the filename correspond to the meta-data's file unique id of the related utterance. Each
 # of these files is furthermore indexed with a counter _1, _2, _3, etc. for each recording try of the utterance. Only
 # the file with the highest counter value should be picked if there are multiple tries of an utterance. The prefix t3_
-# stands for "Talrómur3". The unique id is always 0 numbers with leading zeros. These are not necessarily monotonically
+# stands for "Talrómur3". The unique id is always a number with leading zeros. This is not necessarily monotonically
 # increasing and can "jump" as they have been selected from another utterance corpus. The filenames can also contain
-# spaces, mainly in front of the suffix ".wav".
+# spaces, mainly after the unique id, e.g.  "XXXX_023 _1.wav".
 #
-# The raw material emotion script has the following structure, one utterance per row:
+# The emotion script has the following structure, one utterance per row:
 #
 #       ( t3_<unique-id-per-folder>  "<Intensity level 1-5>: <utterance text>" )
 #
@@ -62,7 +64,7 @@
 #       ( t3a_<unique-id-per-folder> "<utterance text>" )
 #
 # Whereas the source directory unique-id's are non-monotonic, the destination unique-id's are always monotonically increasing numbers
-# and start with 001. The source directory unique-id's are only unique per folder.0
+# and start with 001, but are unique only per folder.
 
 import argparse
 from collections import Counter
