@@ -163,8 +163,26 @@ def process_files(source_dir, dest_dir, orig_name, dest_name, emotion_script, ad
             dest_path = os.path.join(dest_dir, dest_subdir, new_file_name)
 
             if use_flac:
-                data, samplerate = sf.read(src_path)
-                sf.write(dest_path, data, samplerate)
+                # we need to find the correct bit depth of the source file
+                with sf.SoundFile(src_path) as src_file:
+                    original_subtype = src_file.subtype
+                    original_format = src_file.format
+
+                    if original_subtype in ['PCM_16', 'PCM_U8']:
+                        np_dtype = 'int16'
+                    elif original_subtype in ['PCM_24', 'PCM_32']:
+                        np_dtype = 'int32'
+                    elif original_subtype == 'FLOAT':
+                        np_dtype = 'float32'
+                    else:
+                        np_dtype = 'float32'  # Fallback
+
+                    # read audio data with correct dtype
+                    data = src_file.read(dtype=np_dtype)
+                    samplerate = src_file.samplerate
+
+                # convert to FLAC with original bit-depth and dtype
+                sf.write(dest_path, data, samplerate, format='FLAC', subtype=original_subtype)
             else:
                 shutil.copy2(src_path, dest_path)
 
