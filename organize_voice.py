@@ -166,17 +166,16 @@ def process_files(source_dir, dest_dir, orig_name, dest_name, emotion_script, ad
                     convert2flac(src_path, dest_path)
                 else:
                     shutil.copy2(src_path, dest_path)
-
-                file_counts[dest_subdir] += 1
             else:
                 missing_files.append(f"{emotion}/{new_file_name}")
 
+            file_counts[dest_subdir] += 1
             index_data.append(f'{relative_path}\t{dest_name}\t{dest_subdir}\t{intensity}\t{utterance}\n')
             pbar.update(1)
             pbar.set_postfix({"Emotion": emotion, "File": file_counter}, refresh=True)
 
     if missing_files:
-        print("\nWarning: The following files are missing:")
+        print(f"\nWarning: The following files will be missing inside {dest_dir}, because of non-existent recordings:")
         for file in missing_files:
             print(file)
     return index_data, file_counts
