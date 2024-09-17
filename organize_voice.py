@@ -84,7 +84,7 @@ def parse_arguments():
     parser.add_argument("--addenda-script", required=True, help="Utterance script for addenda recordings")
     parser.add_argument("--verbose", action="store_true", help="Display detailed statistics at the end")
     parser.add_argument("--force", action="store_true", help="Overwrite destination directory without prompting")
-    parser.add_argument("--zero-emotion", help="Comma-separated list of emotions to set intensity to 0")
+    parser.add_argument("--zero-emotion", default="neutral", help="Comma-separated list of emotions to set intensity to 0")
     parser.add_argument("--flac", action="store_true", help="Convert audio files to FLAC format")
     return parser.parse_args()
 
@@ -119,86 +119,83 @@ def create_directory_structure(dest_dir, emotions, addenda):
     for emotion in emotions + addenda:
         os.makedirs(os.path.join(dest_dir, emotion), exist_ok=True)
 
+
 def process_files(source_dir, dest_dir, orig_name, dest_name, emotion_script, addenda_script, addenda, zero_emotions, use_flac):
     index_data = []
     file_counts = Counter()
+    missing_files = []
 
-    total_files = sum(len([f for f in os.listdir(os.path.join(source_dir, subdir)) if f.endswith('.wav')])
-                      for subdir in os.listdir(source_dir) if subdir.startswith(orig_name))
-
-    pbar = tqdm(total=total_files, desc="Processing files", unit="file")
-
+    all_utterances = []
     for subdir in os.listdir(source_dir):
         if not subdir.startswith(orig_name):
             continue
-
         _, emotion = subdir.split('_', 1)
         is_addendum = emotion in addenda
         script = addenda_script if is_addendum else emotion_script
+        for base_name in sorted(script.keys()):
+            all_utterances.append((emotion, base_name, is_addendum))
 
-        src_subdir = os.path.join(source_dir, subdir)
-        files = [f for f in os.listdir(src_subdir) if f.endswith('.wav')]
+    total_utterances = len(all_utterances)
 
-        utterance_files = {}
-        for file in files:
-            match = re.match(r'(t3a?_\d+)_(\d+)\.wav', file.replace(' ', ''))
-            if match:
-                base_name, counter = match.groups()
-                if base_name not in utterance_files or int(counter) > int(utterance_files[base_name][1]):
-                    utterance_files[base_name] = (file, counter)
-
-        file_counter = 1
-        for base_name, (file, _) in sorted(utterance_files.items()):
-            src_path = os.path.join(src_subdir, file)
+    with tqdm(total=total_utterances, desc="Processing", unit="utt", position=0, leave=True) as pbar:
+        for emotion, base_name, is_addendum in all_utterances:
+            src_subdir = os.path.join(source_dir, f"{orig_name}_{emotion}")
+            files = {f.replace(' ', ''): f for f in os.listdir(src_subdir) if f.endswith('.wav')}
 
             if is_addendum:
                 dest_subdir = emotion
                 intensity = '0'
-                utterance = script.get(f'{base_name}', '')
+                utterance = addenda_script.get(base_name, '')
             else:
                 dest_subdir = emotion
-                intensity, utterance = script.get(f'{base_name}', ('', ''))
+                intensity, utterance = emotion_script.get(base_name, ('', ''))
                 if emotion in zero_emotions:
                     intensity = '0'
 
+            matching_file = next((files[f] for f in files if f.startswith(f'{base_name}_')), None)
+
+            file_counter = file_counts[dest_subdir] + 1
             new_file_name = f'{dest_name}_{emotion}_{file_counter:03d}.{"flac" if use_flac else "wav"}'
-            dest_path = os.path.join(dest_dir, dest_subdir, new_file_name)
-
-            if use_flac:
-                # we need to find the correct bit depth of the source file
-                with sf.SoundFile(src_path) as src_file:
-                    original_subtype = src_file.subtype
-                    original_format = src_file.format
-
-                    if original_subtype in ['PCM_16', 'PCM_U8']:
-                        np_dtype = 'int16'
-                    elif original_subtype in ['PCM_24', 'PCM_32']:
-                        np_dtype = 'int32'
-                    elif original_subtype == 'FLOAT':
-                        np_dtype = 'float32'
-                    else:
-                        np_dtype = 'float32'  # Fallback
-
-                    # read audio data with correct dtype
-                    data = src_file.read(dtype=np_dtype)
-                    samplerate = src_file.samplerate
-
-                # convert to FLAC with original bit-depth and dtype
-                sf.write(dest_path, data, samplerate, format='FLAC', subtype=original_subtype)
-            else:
-                shutil.copy2(src_path, dest_path)
-
             relative_path = new_file_name
+
+            if matching_file:
+                src_path = os.path.join(src_subdir, matching_file)
+                dest_path = os.path.join(dest_dir, dest_subdir, new_file_name)
+
+                if use_flac:
+                    convert2flac(src_path, dest_path)
+                else:
+                    shutil.copy2(src_path, dest_path)
+
+                file_counts[dest_subdir] += 1
+            else:
+                missing_files.append(f"{emotion}/{new_file_name}")
+
             index_data.append(f'{relative_path}\t{dest_name}\t{dest_subdir}\t{intensity}\t{utterance}\n')
-
-            file_counter += 1
-            file_counts[dest_subdir] += 1
-
             pbar.update(1)
+            pbar.set_postfix({"Emotion": emotion, "File": file_counter}, refresh=True)
 
-    pbar.close()
-
+    if missing_files:
+        print("\nWarning: The following files are missing:")
+        for file in missing_files:
+            print(file)
     return index_data, file_counts
+
+
+def convert2flac(src_path, dest_path):
+    with sf.SoundFile(src_path) as src_file:
+        original_subtype = src_file.subtype
+        if original_subtype in ['PCM_16', 'PCM_U8']:
+            np_dtype = 'int16'
+        elif original_subtype in ['PCM_24', 'PCM_32']:
+            np_dtype = 'int32'
+        elif original_subtype == 'FLOAT':
+            np_dtype = 'float32'
+        else:
+            np_dtype = 'float32'  # Fallback
+        data = src_file.read(dtype=np_dtype)
+        samplerate = src_file.samplerate
+    sf.write(dest_path, data, samplerate, format='FLAC', subtype=original_subtype)
 
 
 def write_index_file(dest_dir, index_data):
@@ -208,35 +205,35 @@ def write_index_file(dest_dir, index_data):
 
 def main():
     args = parse_arguments()
-
-    if os.path.exists(args.dest):
+    dest_voice_dir = str(os.path.join(args.dest, args.dest_name))
+    if os.path.exists(dest_voice_dir):
         if args.force:
-            shutil.rmtree(args.dest)
+            shutil.rmtree(dest_voice_dir)
         else:
-            overwrite = input(f"Destination directory '{args.dest}' already exists. Overwrite? (y/n): ").lower()
+            overwrite = input(f"Destination directory '{dest_voice_dir}' already exists. Overwrite? (y/n): ").lower()
             if overwrite != 'y':
                 print("Operation aborted.")
                 return
-            shutil.rmtree(args.dest)
+            shutil.rmtree(dest_voice_dir)
 
-    os.makedirs(args.dest)
+    os.makedirs(dest_voice_dir)
 
     emotion_script = read_script(args.emotion_script, is_emotion=True)
     addenda_script = read_script(args.addenda_script, is_emotion=False)
 
     emotions, addenda = get_emotions_and_addenda(args.source, args.orig_name)
-    create_directory_structure(args.dest, emotions, addenda)
+    create_directory_structure(dest_voice_dir, emotions, addenda)
 
     zero_emotions = args.zero_emotion.split(',') if args.zero_emotion else []
-    index_data, file_counts = process_files(args.source, args.dest, args.orig_name, args.dest_name, emotion_script, addenda_script, addenda, zero_emotions, args.flac)
-    write_index_file(args.dest, index_data)
-
-    print(f"Voice recordings organized successfully. Output directory: {args.dest}")
+    index_data, file_counts = process_files(args.source, dest_voice_dir, args.orig_name, args.dest_name, emotion_script, addenda_script, addenda, zero_emotions, args.flac)
+    write_index_file(dest_voice_dir, index_data)
 
     if args.verbose:
         print("\nFile counts per emotion/addendum:")
         for emotion, count in file_counts.items():
             print(f"{emotion}: {count}")
+        print(f"Voice recordings reorganized into output directory: {dest_voice_dir}")
+
 
 if __name__ == "__main__":
     main()
