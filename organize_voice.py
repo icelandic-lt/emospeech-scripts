@@ -119,6 +119,23 @@ def create_directory_structure(dest_dir, emotions, addenda):
     for emotion in emotions + addenda:
         os.makedirs(os.path.join(dest_dir, emotion), exist_ok=True)
 
+# Return file with the highest number suffix (corresponds to the recording try of an utterance)
+def get_highest_numbered_file(files, base_name):
+    # Create a dictionary mapping stripped filenames to original filenames
+    stripped_to_original = {f.replace(' ', ''): f for f in files}
+
+    # Find matching files based on the stripped filenames
+    matching_files = [f for f in stripped_to_original.keys() if f.startswith(f'{base_name}_')]
+
+    if not matching_files:
+        return None
+
+    # Find the file with the highest number
+    highest_numbered_file = max(matching_files, key=lambda x: int(x.split('_')[-1].split('.')[0]))
+
+    # Return the original filename (with spaces if any)
+    return stripped_to_original[highest_numbered_file]
+
 
 def process_files(source_dir, dest_dir, orig_name, dest_name, emotion_script, addenda_script, addenda, zero_emotions, use_flac):
     index_data = []
@@ -140,6 +157,7 @@ def process_files(source_dir, dest_dir, orig_name, dest_name, emotion_script, ad
     with tqdm(total=total_utterances, desc="Processing", unit="utt", position=0, leave=True) as pbar:
         for emotion, base_name, is_addendum in all_utterances:
             src_subdir = os.path.join(source_dir, f"{orig_name}_{emotion}")
+            # dict of orig filename to filename with spaces squeezed
             files = {f.replace(' ', ''): f for f in os.listdir(src_subdir) if f.endswith('.wav')}
 
             if is_addendum:
@@ -152,7 +170,7 @@ def process_files(source_dir, dest_dir, orig_name, dest_name, emotion_script, ad
                 if emotion in zero_emotions:
                     intensity = '0'
 
-            matching_file = next((files[f] for f in files if f.startswith(f'{base_name}_')), None)
+            matching_file = get_highest_numbered_file(files.values(), base_name)
 
             file_counter = file_counts[dest_subdir] + 1
             new_file_name = f'{dest_name}_{emotion}_{file_counter:03d}.{"flac" if use_flac else "wav"}'
