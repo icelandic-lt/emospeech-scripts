@@ -1,4 +1,4 @@
-# Scripts for preparation of the emotional speech dataset
+# Icelandic EmoSpeech
 
 This repository provides scripts for recording and post-processing of emotional speech datasets.
 
@@ -12,7 +12,7 @@ This repository provides scripts for recording and post-processing of emotional 
 This project has been created by the [Language and Voice Lab](https://lvl.ru.is/) at Reykjavík University in cooperation with [Grammatek ehf](https://www.grammatek.com) and is part of the [Icelandic Language Technology Programme](https://github.com/icelandic-lt/icelandic-lt).
 
 - **Category:** [TTS](https://github.com/icelandic-lt/icelandic-lt/blob/main/doc/tts.md)
-- **Domain:** Mac/Server/Workstation
+- **Domain:** Laptop/Workstation
 - **Languages:** Python
 - **Language Version/Dialect:**
   - Python: 3.9+
@@ -23,15 +23,16 @@ This project has been created by the [Language and Voice Lab](https://lvl.ru.is/
 ![Development](https://img.shields.io/badge/Development-darkviolet)
 
 ## System Requirements
-- Operating System: Linux/OS-X
+- Operating System: Linux/OS-X, should work on Windows
+- Recording: Audio Interface, good voice Mics
 
 ## Description
 
-This project has been used to create Talrómur 3 <TODO: Link on Clarin once it's published>, the Icelandic emotional speech dataset. You can use this project to create voice recordings, be it emotional recordings or neutral recordings in combination with a workstation/laptop and appropriate audio recording equipment.
+This project has been used to create Talrómur 3 <TODO: Link on Clarin once it's published>, the Icelandic emotional speech dataset. You can use this project to create voice recordings, be it emotional recordings or neutral recordings in combination with a workstation/laptop and appropriate audio recording equipment. We used OS-X for our recordings, but it should as well work on Linux and Windows.
 
 The recordings are done with a Python script that prints the utterance text with big letters on a text window and reacts to certain keys of a keyboard to quickly record the utterance, to play it, or navigate to the previous or next utterance. The same utterance can also be rerecorded any number of times. All recordings are saved to the directory given on command line. Although a bit raw, this script is an effective way to collect a new voice corpus quickly, given the appropriate equipment and a recording studio is available.
 
-Following the recording of the raw audio files, we provide the script [organize_voice.py](organize_voice.py), to convert the raw recordings into a complete voice dataset that can be used for training a TTS voice model. If certain conventions are used for the directory names of the voice recordings, e.g. multiple recordings with the same voice but different styles, emotions, etc. these can be combined into the same voice dataset and also be losslessly converted into the FLAC format to save disk space.
+Following the recording of the raw audio files, we provide the script [organize_voice.py](organize_voice.py), to convert the raw recordings into a complete voice dataset that can be used for training a TTS voice model. If certain conventions are used for the directory names of the voice recordings, e.g. multiple recordings with the same voice but different styles, emotions, etc., then these can be combined into the same voice dataset and also be losslessly converted into the FLAC format to save disk space.
 
 Additionally, we provide an experimental script [vadiate.py](vadiate.py) that uses voice activity detection (VAD) to generate a list of voice activity timings for each dataset. This can be used, to e.g. surgically cut the beginning and end of a dataset recording to eliminate silence, or to split a recording into multiple pieces. The detection is mostly accurate, but for some strong emotions in combination with short utterances, voice activity is sometimes not detected correctly. 
 
@@ -49,21 +50,79 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Start recordings 
+## Record dataset 
 
-**<to be done>**
+**to be done**
 
 ## Create dataset
 
-**<to be done>**
+A voice dataset can be created with the script [organize_voice.py](organize_voice.py) that takes the following required parameters:
+
+```bash
+python3 organize_voice.py \
+     --source=<directory of raw recordings> \
+     --dest=<destination base directory> \
+     --orig_name=<name of the original voice> \
+     --dest_name=<new name of the voice> \
+     --emotion-script=<emotion script used for the prompts> \
+     --addenda-script=<special script used for addenda>
+```
+The parameters `--dest` and `--dest_name` together form the destination directory of the generated dataset. If you have multiple speaker recordings in one directory, each in its own subdirectory, you can simply change the parameters `--orig_name` and `--dest_name` to create the new dataset. The parameters `--emotion-script` and `--addenda-script` refer to the utterance scripts you used for recording the raw speaker data.
+
+If you followed the naming conventions recommended in "Record dataset", you can combine multiple recording directories of the same speaker at once. The directory pattern that should be followed is: `<voice-name>_<emotion>/`, where `<emotion>` can be any style you want.
+
+These optional parameters can be provided:
+
+```bash
+     --force                          overwrite destination directory if it exists
+     --flac                           convert to flac instead of RIFF format
+     --zero-emotion="neutral, ...."   add list of emotions where corresponding emotion level should be set to 0
+     --verbose                        print some statistics at the end
+```
+By default, the original emotion values of the script given by `--emotion-script` are used for the emotion intensity level of each field inside the metadata file `index.tsv`. Recordings with emotion names starting with **addendum** are always set to emotion level `0`. By default, the emotion **neutral** is set to `0` as well, unless the parameter `--zero-emotion` is set differently.
+
+For details about the final directory layout and the metadata format inside the generated `index.tsv` file, refer to [organize_voice.py](organize_voice.py).
 
 ## Run VAD (voice activity detection)
+
+To create a JSON file containing detailed voice activity of all audio files of a directory, use the following script:
 
 ```bash
 python3 vadiate.py <source directory of audio files> <output.json>
 ```
 
-There might be warnings for **"No speech detected in ..."** which means the VAD couldn't recognize any valid speech. Try parameter `--use-dynamic-threshold` to automatically reduce the confidence threshold. But always control the generated timings manually in those cases. Parameters of the VAD might be needed to be tweaked manually for your specific dataset for good values. Refer to the documentation of [Silero VAD](https://github.com/snakers4/silero-vad) for the exact meaning of all parameters of the used Python API.
+This will create a file with the following format:
+
+```json
+{
+  "angry/h_angry_001.flac": {
+    "overall": 4.779,
+    "timestamps": [
+      [
+        0.45,
+        2.302
+      ],
+      [
+        2.53,
+        4.318
+      ]
+    ],
+    "begin": 0.45,
+    "end": 4.318
+  },
+  ...
+}
+```
+
+`overall` gives the total length of the recording, `timestamps` contains a list of all detected voice activities, `begin` and `end` mark the beginning and end of detected voice activity inside the recording. All times are given in seconds, accurate to the millisecond.
+
+There might be warnings for **"No speech detected in ..."** which means the VAD couldn't recognize any valid speech. This happens in our experience foremost with very emotional recordings in combination with short utterances.
+
+You can try the parameter `--use-dynamic-threshold` to automatically reduce the confidence threshold for the VAD prediction. Please always control the generated timings manually in those cases. Parameters of the VAD might also be needed to be tweaked according to your specific dataset. Refer to the documentation of [Silero VAD](https://github.com/snakers4/silero-vad) for the exact meaning of all parameters of the used Python API.
+
+### Alternatives
+
+Alternatively, you can try an aligner model with your dataset like [MFA (Montreal Forced Aligner)](https://montreal-forced-aligner.readthedocs.io). MFA needs to be trained on a dataset. Although MFA often gives very good results, we haven't tried it on our emotional dataset yet.
 
 ## Acknowledgements
-This project was funded by the Language Technology Programme for Icelandic 2019-2024. The program was funded by the Icelandic Ministry of Education, Science and Culture.
+This project is part of the Language Technology Programme for Icelandic 2019-2024. The program was funded by the Icelandic Ministry of Education, Science and Culture.
