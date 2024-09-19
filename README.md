@@ -3,7 +3,8 @@
 This repository provides scripts for recording and post-processing of emotional speech datasets.
 
 ![Version](https://img.shields.io/badge/Version-master-darkgreen)
-![Python](https://img.shields.io/badge/python-3.9+-blue?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/python-3.9-blue?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/python-3.10-blue?logo=python&logoColor=white)
 ![CI Status](https://img.shields.io/badge/CI-[unavailable]-red)
 ![Docker](https://img.shields.io/badge/Docker-[unavailable]-red)
 
@@ -15,9 +16,9 @@ This project has been created by the [Language and Voice Lab](https://lvl.ru.is/
 - **Domain:** Laptop/Workstation
 - **Languages:** Python
 - **Language Version/Dialect:**
-  - Python: 3.9+
+  - Python: 3.9, 3.10
 - **Audience**: Developers, Researchers
-- **Origins:** [speechrecorder](??)
+- **Origins:** [speechrecorder](https://github.com/grammatek/speechrecorder)
 
 ## Status
 ![Development](https://img.shields.io/badge/Development-darkviolet)
@@ -30,7 +31,7 @@ This project has been created by the [Language and Voice Lab](https://lvl.ru.is/
 
 This project has been used to create Talrómur 3 <TODO: Link on Clarin once it's published>, the Icelandic emotional speech dataset. You can use this project to create voice recordings, be it emotional recordings or neutral recordings in combination with a workstation/laptop and appropriate audio recording equipment. We used OS-X for our recordings, but it should as well work on Linux and Windows.
 
-The recordings are done with a Python script that prints the utterance text with big letters on a text window and reacts to certain keys of a keyboard to quickly record the utterance, to play it, or navigate to the previous or next utterance. The same utterance can also be rerecorded any number of times. All recordings are saved to the directory given on command line. Although a bit raw, this script is an effective way to collect a new voice corpus quickly, given the appropriate equipment and a recording studio is available.
+The recordings are done with the Python script [rec.py](rec.py) that prints the utterance text with big letters on a text window and reacts to certain keys of a keyboard to quickly record the utterance, to play it, or navigate to the previous or next utterance. The same utterance can also be rerecorded any number of times. All recordings are saved to the directory given on command line. Although a bit raw, this script is an effective way to collect a new voice corpus quickly, given the appropriate equipment and a recording studio is available.
 
 Following the recording of the raw audio files, we provide the script [organize_voice.py](organize_voice.py), to convert the raw recordings into a complete voice dataset that can be used for training a TTS voice model. If certain conventions are used for the directory names of the voice recordings, e.g. multiple recordings with the same voice but different styles, emotions, etc., then these can be combined into the same voice dataset and also be losslessly converted into the FLAC format to save disk space.
 
@@ -50,9 +51,93 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+## Prepare recordings
+
+Before you start recording, you should prepare a script with the utterances you want to record. The script should be a simple text file with one utterance per line. The utterances can be in any language you want. The script file has the following possible two formats:
+
+For a script with emotion levels:
+
+```text
+( <unique id> "<emotion-level>: <utterance>" )
+```
+
+For a script without emotion levels. We have used these for recording our non-emotional "addendas":
+
+```text
+( <unique id> "<utterance>" )
+```
+
+You can see for both formats an example in the directory [scripts](scripts/).
+
+The emotion levels can be from any monotonic numerical value range you want. We have used emotion levels 1-5 for our Talrómur 3 dataset and recorded 6 emotions: neutral, happy, sad, angry, surprised, and helpful. The emotion levels are used to control the emotion intensity of the speech in combination with the specific emotion. For neutral speech, we used the emotion level 0.
+
+To introduce variability in emotional intensity across speakers for the same utterance, we developed the Python script '[intensity_norm_script.py](intensity_norm_script.py). This tool generates unique emotion levels for each speaker, normalizing them to a given numerical range following a normal distribution with a given average and standard deviation.
+
+The script parameters used to create our emotion levels were as follows:
+
+```bash
+python3 intensity_norm_script.py \
+   --script scripts/t3_intensity_script \
+   --output <output script> \
+   --mean 3.2 \
+   --std_dev 1.4 \
+   --min_val 1 \
+   --max_val 5 \
+   --plot
+```
+
+You can analyze the values of a given script by just providing the script file as a parameter. The script will print the mean, standard deviation, and the minimum and maximum values of the emotion levels.
+
+You can also only generate the numeric values on stdout by not providing the `--output` and `--script` parameters.
+
+The parameter `--plot` is always optional and plots the distribution of the analyzed/generated emotion values. 
+
 ## Record dataset 
 
-**to be done**
+The script [rec.py](rec.py) is used for recording the raw voice samples. It takes the following parameters:
+
+```bash
+python3 rec.py \
+     --audio-in <audio input device> \
+     --audio-out <audio output device> \
+     --recdir <directory to save recordings>
+     --sr <sample rate, 44100 by default>
+     --bits <bits per sample (16, 24), 16 by default>
+```
+
+You can either specify the audio input and output devices by their names or by their indices. The indices can be found by running the script without any parameters. The script will list all available devices and their indices. You can as well get a list of all available devices by running the script with the parameter `--show-devices`.
+
+The following keys are used for controlling the script:
+
+- **Space**: Start/Stop to record the current utterance. You can rerecord each utterance as often as you want.
+- **P**: Play the current utterance
+- **Cursor down**: Go to the next utterance
+- **Cursor up**: Go to the previous utterance
+
+Additionally, you can choose to start not from the beginning of the given script but from a specific utterance index by providing the parameter `--start-idx <utterance number>`. This is useful if you want to rerecord a specific utterance or if you want to continue recording after a break.
+
+Each recording is placed directly inside the directory given by the parameter `--recdir`. The recordings are named according to the script id's and followed by the recording attempt number _1/_2/_3/... You can rerecord each utterance as often as you want.
+
+E.g. if you have the following script:
+
+```text
+( t3_001 "2: Hello, how are you?" )
+( t3_002 "5: I am fine, thank you." )
+( t3_003 "1: What is your name?" )
+...
+```
+Then the recordings will be saved e.g. as:
+
+```text
+t3_001_1.wav
+t3_001_2.wav
+t3_002_1.wav
+t3_002_2.wav
+t3_002_3.wav
+t3_003_1.wav
+...
+```
+
 
 ## Create dataset
 
