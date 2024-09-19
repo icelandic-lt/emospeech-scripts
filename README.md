@@ -18,7 +18,7 @@ This project has been created by the [Language and Voice Lab](https://lvl.ru.is/
 - **Language Version/Dialect:**
   - Python: 3.9, 3.10
 - **Audience**: Developers, Researchers
-- **Origins:** [speechrecorder](https://github.com/grammatek/speechrecorder)
+- **Origins:** [speechrecorder #1](https://github.com/grammatek/speechrecorder), [#2](https://github.com/dan-wells/speechrecorder)
 
 ## Status
 ![Development](https://img.shields.io/badge/Development-darkviolet)
@@ -61,7 +61,7 @@ For a script with emotion levels:
 ( <unique id> "<emotion-level>: <utterance>" )
 ```
 
-For a script without emotion levels. We have used these for recording our non-emotional "addendas":
+For a script without emotion levels. This format was used for recording our non-emotional "addendas":
 
 ```text
 ( <unique id> "<utterance>" )
@@ -69,7 +69,7 @@ For a script without emotion levels. We have used these for recording our non-em
 
 You can see for both formats an example in the directory [scripts](scripts/).
 
-The emotion levels can be from any monotonic numerical value range you want. We have used emotion levels 1-5 for our Talrómur 3 dataset and recorded 6 emotions: neutral, happy, sad, angry, surprised, and helpful. The emotion levels are used to control the emotion intensity of the speech in combination with the specific emotion. For neutral speech, we used the emotion level 0.
+The emotion levels can be from any monotonic numerical value range you want. We have used emotion levels 1-5 for the Talrómur 3 dataset and recorded 6 emotions: neutral, happy, sad, angry, surprised, and helpful. The emotion levels are used to control the emotion intensity of the speech in combination with the specific emotion. For neutral speech, we used emotion level 0.
 
 To introduce variability in emotional intensity across speakers for the same utterance, we developed the Python script '[intensity_norm_script.py](intensity_norm_script.py). This tool generates unique emotion levels for each speaker, normalizing them to a given numerical range following a normal distribution with a given average and standard deviation.
 
@@ -82,8 +82,7 @@ python3 intensity_norm_script.py \
    --mean 3.2 \
    --std_dev 1.4 \
    --min_val 1 \
-   --max_val 5 \
-   --plot
+   --max_val 5
 ```
 
 You can analyze the values of a given script by just providing the script file as a parameter. The script will print the mean, standard deviation, and the minimum and maximum values of the emotion levels.
@@ -100,9 +99,10 @@ The script [rec.py](rec.py) is used for recording the raw voice samples. It take
 python3 rec.py \
      --audio-in <audio input device> \
      --audio-out <audio output device> \
-     --recdir <directory to save recordings>
-     --sr <sample rate, 44100 by default>
-     --bits <bits per sample (16, 24), 16 by default>
+     --recdir <directory to save recordings> \
+     --sr <sample rate, 44100 by default> \
+     --bits <bits per sample (16, 24), 16 by default> \
+     --script <script file>
 ```
 
 You can either specify the audio input and output devices by their names or by their indices. The indices can be found by running the script without any parameters. The script will list all available devices and their indices. You can as well get a list of all available devices by running the script with the parameter `--show-devices`.
@@ -113,6 +113,7 @@ The following keys are used for controlling the script:
 - **P**: Play the current utterance
 - **Cursor down**: Go to the next utterance
 - **Cursor up**: Go to the previous utterance
+- **Q**: To quit
 
 Additionally, you can choose to start not from the beginning of the given script but from a specific utterance index by providing the parameter `--start-idx <utterance number>`. This is useful if you want to rerecord a specific utterance or if you want to continue recording after a break.
 
@@ -138,6 +139,9 @@ t3_003_1.wav
 ...
 ```
 
+### Directory naming convention
+
+If you follow the convention to name your recording directories as `<voice-name>_<emotion>/`, you can easily combine multiple recordings of the same speaker into one dataset with the script [organize_voice.py](organize_voice.py). The script will automatically recognize the emotion and emotion level of each recording and save it to the metadata file `index.tsv` inside the destination directory. Please make sure to always use the same utterance script for all recordings of the same speaker.
 
 ## Create dataset
 
@@ -154,7 +158,7 @@ python3 organize_voice.py \
 ```
 The parameters `--dest` and `--dest_name` together form the destination directory of the generated dataset. If you have multiple speaker recordings in one directory, each in its own subdirectory, you can simply change the parameters `--orig_name` and `--dest_name` to create the new dataset. The parameters `--emotion-script` and `--addenda-script` refer to the utterance scripts you used for recording the raw speaker data.
 
-If you followed the naming conventions recommended in "Record dataset", you can combine multiple recording directories of the same speaker at once. The directory pattern that should be followed is: `<voice-name>_<emotion>/`, where `<emotion>` can be any style you want.
+If you followed the naming conventions recommended in [Record dataset](README.md#record-dataset), you can combine multiple recording directories of the same speaker at once. The directory pattern that should be followed is: `<voice-name>_<emotion>/`, where `<emotion>` can be any style you want.
 
 These optional parameters can be provided:
 
