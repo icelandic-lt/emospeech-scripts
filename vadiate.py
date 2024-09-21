@@ -1,3 +1,5 @@
+#!/bin/env python
+
 # This script applies VAD (voice activity detection) to a directory hierarchy of files and produces an output file
 # in JSON format that collects all non-silence parts of an audio file as time-stamps in seconds and some general statistics
 

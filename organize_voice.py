@@ -1,3 +1,5 @@
+#!/bin/env python
+
 # This Python script reorganizes raw recording files of a voice recording to a new dataset structure.
 # The destination raw recording of an emotional speech dataset is made up of multiple directories. Each directory
 # contains recordings of either 6 distinct emotions or one of 2 addenda recordings for spelling out numbers and letters
