@@ -209,9 +209,25 @@ There might be warnings for **"No speech detected in ..."** which means the VAD 
 
 You can try the parameter `--use-dynamic-threshold` to automatically reduce the confidence threshold for the VAD prediction. Please always control the generated timings manually in those cases. Parameters of the VAD might also be needed to be tweaked according to your specific dataset. Refer to the documentation of [Silero VAD](https://github.com/snakers4/silero-vad) for the exact meaning of all parameters of the used Python API.
 
-### Alternatives
+## Alignment
 
-Alternatively, you can try an aligner model with your dataset like [MFA (Montreal Forced Aligner)](https://montreal-forced-aligner.readthedocs.io). MFA needs to be trained on a dataset. Although MFA often gives very good results, we haven't tried it on our emotional dataset yet.
+We used [MFA (Montreal Forced Aligner)](https://montreal-forced-aligner.readthedocs.io) to obtain phoneme-level alignments of the recordings.
+In order to ensure reproducibility, [the official Docker image](https://hub.docker.com/r/mmcauliffe/montreal-forced-aligner) for MFA was used, which can be invoked by calling
+```
+alignment/run_docker.sh `pwd`/data/processed `pwd`/data/alignment
+```
+Note that in order to successfully run the script you need to first set up Docker, and then ensure that the user you are calling the script as has the required privileges. See [here](https://docs.docker.com/engine/install/linux-postinstall/) for more details.
+
+
+Once the interactive docker container is running, you can perform the MFA alignment from scratch by running
+```
+cd /home/mfauser/data/scripts
+./run_entire_pipeline.sh
+```
+
+This will write out alignments in TextGrid form under `data/alignment/alignment/` and write Grapheme-to-phoneme and acoustic models to `data/alignment/models`
+
+Since the alignment files denote leading and trailing silences, they may be used in place of the VAD system to trim the audio.
 
 ## Acknowledgements
 This project is part of the Language Technology Programme for Icelandic 2019-2024. The program was funded by the Icelandic Ministry of Education, Science and Culture.
