@@ -33,7 +33,7 @@ chmod -R 777 "$output_dir"
 
 # Pull the latest MFA Docker image
 echo "Pulling the latest MFA Docker image..."
-docker pull mmcauliffe/montreal-forced-aligner:latest
+docker pull mmcauliffe/montreal-forced-aligner:v3.1.3
 
 # Run the Docker container
 echo "Starting the MFA Docker container..."

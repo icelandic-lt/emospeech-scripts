@@ -1,22 +1,20 @@
 #!/bin/bash
 
-# Function to display usage information
 usage() {
   echo "Usage: $0 <path_to_csv_file>"
-  echo "This script reads a CSV file with two columns (name and id) and no header."
-  echo "It iterates through each line and prints the name and id."
+  echo "This script is intended for anonymization of data in Talrómur 3."
+  echo "It reads a CSV file with two columns (name and id) and no header."
+  echo "It then iterates through each line and calls the organize_voice script for each name/ID pair."
+  echo "It expects the output of the adjacent unzip_corpus.zip to be present in data/EmoSpeech"
   exit 1
 }
 
-# Check if an argument is provided
 if [ $# -eq 0 ]; then
   usage
 fi
 
-# Assign the first argument to a variable
 csv_file="$1"
 
-# Check if the file exists
 if [ ! -f "$csv_file" ]; then
   echo "Error: File '$csv_file' does not exist."
   exit 1
@@ -39,7 +37,6 @@ while IFS=',' read -r name id; do
     --flac \
     --force
 
-  # Print the name and id
   echo "Name: $name, ID: $id"
 done <"$csv_file"
 
