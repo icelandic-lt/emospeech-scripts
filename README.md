@@ -230,4 +230,4 @@ This will write out alignments in TextGrid form under `data/alignment/alignment/
 Since the alignment files denote leading and trailing silences, they may be used in place of the VAD system to trim the audio.
 
 ## Acknowledgements
-This project is part of the Language Technology Programme for Icelandic 2019-2024. The program was funded by the Icelandic Ministry of Education, Science and Culture.
+This project is part of the program Language Technology for Icelandic. The program was funded by the Icelandic Ministry of Culture and Business Affairs.
