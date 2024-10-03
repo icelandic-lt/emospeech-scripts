@@ -13,3 +13,4 @@ soundfile~=0.12.1
 torch~=2.2.0
 torchaudio>=2.2.0
 tqdm~=4.66.5
+librosa~=0.10.2
