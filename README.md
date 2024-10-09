@@ -18,7 +18,7 @@ This project has been created by the [Language and Voice Lab](https://lvl.ru.is/
 - **Language Version/Dialect:**
   - Python: 3.9, 3.10
 - **Audience**: Developers, Researchers
-- **Origins:** [speechrecorder #1](https://github.com/grammatek/speechrecorder), [#2](https://github.com/dan-wells/speechrecorder)
+- **Origins:** [Talrómur 3](https://repository.clarin.is/repository/xmlui/handle/20.500.12537/344), [speechrecorder #1](https://github.com/grammatek/speechrecorder), [#2](https://github.com/dan-wells/speechrecorder)
 
 ## Status
 ![Development](https://img.shields.io/badge/Development-darkviolet)
@@ -29,7 +29,7 @@ This project has been created by the [Language and Voice Lab](https://lvl.ru.is/
 
 ## Description
 
-This project has been used to create Talrómur 3 <TODO: Link on Clarin once it's published>, the Icelandic emotional speech dataset. You can use this project to create voice recordings, be it emotional recordings or neutral recordings in combination with a workstation/laptop and appropriate audio recording equipment. We used OS-X for our recordings, but it should as well work on Linux and Windows.
+This project has been used to create [Talrómur 3](https://repository.clarin.is/repository/xmlui/handle/20.500.12537/344), the Icelandic emotional speech dataset. You can use this project to create voice recordings, be it emotional recordings or neutral recordings in combination with a workstation/laptop and appropriate audio recording equipment. We used OS-X for our recordings, but it should as well work on Linux and Windows.
 
 The recordings are done with the Python script [rec.py](rec.py) that prints the utterance text with big letters on a text window and reacts to certain keys of a keyboard to quickly record the utterance, to play it, or navigate to the previous or next utterance. The same utterance can also be rerecorded any number of times. All recordings are saved to the directory given on command line. Although a bit raw, this script is an effective way to collect a new voice corpus quickly, given the appropriate equipment and a recording studio is available.
 
