@@ -178,6 +178,13 @@ class MelSpectrogramProcessor(AudioProcessor):
         )
         self.actual_fmax = actual_fmax
 
+        # Pre-compute mel frequencies for efficiency
+        self.mel_frequencies = librosa.mel_frequencies(
+            n_mels=n_mels + 2,
+            fmin=fmin,
+            fmax=actual_fmax
+        )[1:-1]  # Remove edge bins
+
     def process(self, audio_data: np.ndarray,
                 normalization_factor: Optional[float] = None) -> Tuple[np.ndarray, Optional[float]]:
         """Convert audio frame to mel-scale dB values and detect highest frequency.
@@ -228,20 +235,32 @@ class MelSpectrogramProcessor(AudioProcessor):
         mel_db = np.clip(mel_db, AudioConstants.DB_MIN, 0)
 
         # Detect highest frequency with significant energy
-        # Use the raw FFT power spectrum for frequency detection
+        # Method 1: Use the raw FFT power spectrum for precise frequency detection
         power_db = 10 * np.log10(power[:self.n_fft // 2 + 1] + AudioConstants.DB_REFERENCE)
 
-        # Find highest frequency above noise floor (-60 dB)
-        noise_floor = -60
-        significant_bins = np.where(power_db > noise_floor)[0]
+        # Find highest frequency above noise floor
+        significant_bins = np.where(power_db > AudioConstants.FREQUENCY_NOISE_FLOOR_DB)[0]
 
         if len(significant_bins) > 0:
             highest_bin = significant_bins[-1]
             # Convert bin to frequency
             freq_per_bin = self.sample_rate / self.n_fft
             highest_freq = highest_bin * freq_per_bin
+            # Clamp to Nyquist frequency (sample_rate / 2)
+            highest_freq = min(highest_freq, self.sample_rate / 2)
         else:
             highest_freq = None
+
+        # Method 2 (Alternative): Use mel bins for approximate detection
+        # This is ~10x faster but less precise
+        # Uncomment to use mel-based detection:
+        # mel_threshold = -40  # dB threshold for mel bins
+        # significant_mel_bins = np.where(mel_db > mel_threshold)[0]
+        # if len(significant_mel_bins) > 0:
+        #     highest_mel_bin = significant_mel_bins[-1]
+        #     highest_freq = self.mel_frequencies[highest_mel_bin]
+        # else:
+        #     highest_freq = None
 
         return mel_db, highest_freq
 

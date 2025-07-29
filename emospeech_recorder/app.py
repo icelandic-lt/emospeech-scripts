@@ -180,7 +180,8 @@ class EmoSpeechRecorder:
         # Create callbacks for menu actions
         app_callbacks = {
             'toggle_mel_spectrogram': self._toggle_mel_spectrogram,
-            'update_audio_settings': self._update_audio_settings
+            'update_audio_settings': self._update_audio_settings,
+            'update_info_overlay': self._update_info_overlay
         }
 
         self.window = MainWindow(
@@ -202,16 +203,15 @@ class EmoSpeechRecorder:
             self.stop_signal
         )
 
-        # Start audio queue processing if spectrogram is enabled
-        if self.config.display.show_spectrogram:
-            if hasattr(self.window, 'mel_spectrogram') and self.window.mel_spectrogram is not None:
-                self._start_audio_queue_processing()
-                print("Mel spectrogram widget initialized and audio queue started")
-            else:
-                print("Warning: Mel spectrogram widget not found despite show_spectrogram=True")
-                print(f"Has mel_spectrogram attr: {hasattr(self.window, 'mel_spectrogram')}")
-                if hasattr(self.window, 'mel_spectrogram'):
-                    print(f"mel_spectrogram value: {self.window.mel_spectrogram}")
+        # Start audio queue processing (widget is always created now)
+        if hasattr(self.window, 'mel_spectrogram') and self.window.mel_spectrogram is not None:
+            self._start_audio_queue_processing()
+            print("Mel spectrogram widget initialized and audio queue started")
+        else:
+            print("Warning: Mel spectrogram widget not found")
+            print(f"Has mel_spectrogram attr: {hasattr(self.window, 'mel_spectrogram')}")
+            if hasattr(self.window, 'mel_spectrogram'):
+                print(f"mel_spectrogram value: {self.window.mel_spectrogram}")
 
     def _bind_keys(self) -> None:
         """Bind keyboard shortcuts."""
@@ -312,6 +312,15 @@ class EmoSpeechRecorder:
             self.window.mel_spectrogram.clear()
             self.window.mel_spectrogram.start_recording()
             print(f"Spectrogram recording started, is_recording={self.window.mel_spectrogram.is_recording}")
+
+        # Update info overlay if visible to show recording parameters
+        if self.window.info_overlay.visible:
+            recording_params = {
+                'sample_rate': self.config.audio.sample_rate,
+                'bit_depth': self.config.audio.bit_depth,
+                'channels': self.config.audio.channels
+            }
+            self.window.info_overlay.show(is_recording=True, recording_params=recording_params)
 
         # Start recording
         self.record_queue.put('start')
@@ -519,17 +528,28 @@ class EmoSpeechRecorder:
         # Save the preference
         self.settings_manager.update_setting('show_spectrogram', self.state.ui.spectrogram_visible)
 
+        # Update menu checkbox if it exists
+        if hasattr(self.window, 'mel_spectrogram_var'):
+            self.window.mel_spectrogram_var.set(self.state.ui.spectrogram_visible)
+
     def _show_info_overlay(self) -> None:
         """Show audio info overlay with current recording information."""
         current_label = self.state.recording.current_label
         if not current_label:
             # No utterance selected
             self.window.show_info_overlay(is_recording=self.state.recording.is_recording)
+            # Save the setting
+            self.settings_manager.update_setting('show_info_overlay', self.window.info_overlay.visible)
             return
 
         if self.state.recording.is_recording:
-            # Currently recording - show minimal info
-            self.window.show_info_overlay(is_recording=True)
+            # Currently recording - show actual recording parameters
+            recording_params = {
+                'sample_rate': self.config.audio.sample_rate,
+                'bit_depth': self.config.audio.bit_depth,
+                'channels': self.config.audio.channels
+            }
+            self.window.show_info_overlay(is_recording=True, recording_params=recording_params)
         else:
             # Not recording - show info for current take (the one that would play with P)
             current_take = self.state.recording.get_current_take(current_label)
@@ -541,6 +561,13 @@ class EmoSpeechRecorder:
             else:
                 # No recording for this utterance
                 self.window.show_info_overlay(is_recording=False)
+
+        # Save the setting after toggling
+        self.settings_manager.update_setting('show_info_overlay', self.window.info_overlay.visible)
+
+        # Update menu checkbox if it exists
+        if hasattr(self.window, 'info_overlay_var'):
+            self.window.info_overlay_var.set(self.window.info_overlay.visible)
 
     def _update_info_overlay(self) -> None:
         """Update the info overlay with current file information.
@@ -778,19 +805,7 @@ def parse_arguments() -> argparse.Namespace:
         help='starting index (not id) of UI'
     )
 
-    # Display configuration
-    display = parser.add_argument_group('display configuration')
-    display.add_argument(
-        '--no-spectrogram',
-        action='store_true',
-        help='disable mel spectrogram display'
-    )
-    display.add_argument(
-        '--show-spectrogram',
-        action='store_true',
-        default=True,
-        help='show mel spectrogram (default: True)'
-    )
+    # Display configuration group removed - settings are now persistent
 
     # UI configuration
     ui = parser.add_argument_group('UI configuration')
@@ -944,10 +959,7 @@ def main() -> None:
         if args.audio_out:
             config.audio.output_device = parse_audio_device(args.audio_out)
 
-    # Display settings
-    if args.no_spectrogram:
-        config.display.show_spectrogram = False
-    # Note: show_spectrogram default is already True in DisplayConfig
+    # Display settings are now loaded from saved settings
 
     # UI settings
     config.ui.fullscreen = args.fullscreen

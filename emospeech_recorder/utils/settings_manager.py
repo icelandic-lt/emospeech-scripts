@@ -20,6 +20,7 @@ class UserSettings:
 
     # Display settings
     show_spectrogram: bool = True
+    show_info_overlay: bool = False
     fullscreen: bool = False
 
     # Window settings

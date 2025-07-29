@@ -80,6 +80,15 @@ class MainWindow:
         # Create info overlay
         self.info_overlay = InfoOverlay(self.root)
 
+        # Show info overlay if enabled in settings
+        if getattr(self.settings_manager.settings, 'show_info_overlay', False):
+            self.info_overlay.visible = True
+            # Update checkbox
+            if hasattr(self, 'info_overlay_var'):
+                self.info_overlay_var.set(True)
+            # Show after window is ready
+            self.root.after(100, lambda: self._show_info_overlay_on_startup())
+
         # Bind resize events
         self.root.bind('<Configure>', self._on_window_resize)
 
@@ -187,6 +196,15 @@ class MainWindow:
             variable=self.mel_spectrogram_var,
             command=self._toggle_mel_spectrogram_callback,
             accelerator="M"
+        )
+
+        # Info Overlay checkbutton
+        self.info_overlay_var = tk.BooleanVar(value=getattr(self.settings_manager.settings, 'show_info_overlay', False))
+        view_menu.add_checkbutton(
+            label="Show Info Overlay",
+            variable=self.info_overlay_var,
+            command=self._toggle_info_overlay_callback,
+            accelerator="I"
         )
 
         # Fullscreen checkbutton
@@ -314,6 +332,26 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
             self.app_callbacks['toggle_mel_spectrogram']()
         else:
             self.toggle_spectrogram()
+
+    def _toggle_info_overlay_callback(self) -> None:
+        """Callback for menu toggle info overlay."""
+        # Toggle info overlay
+        self.info_overlay.toggle()
+        # Update settings
+        self.settings_manager.update_setting('show_info_overlay', self.info_overlay.visible)
+
+        # If now visible, show content after small delay to ensure frame is placed
+        if self.info_overlay.visible:
+            # Update checkbox
+            if hasattr(self, 'info_overlay_var'):
+                self.info_overlay_var.set(True)
+            # Call app callback after delay
+            if 'update_info_overlay' in self.app_callbacks:
+                self.root.after(10, self.app_callbacks['update_info_overlay'])
+        else:
+            # Update checkbox
+            if hasattr(self, 'info_overlay_var'):
+                self.info_overlay_var.set(False)
 
     def _toggle_fullscreen_callback(self) -> None:
         """Callback for menu toggle fullscreen."""
@@ -496,9 +534,13 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
         self.control_frame.pack(fill=tk.X, pady=(UIConstants.FRAME_SPACING, 0))
         self.control_frame.pack_propagate(False)
 
-        # Create spectrogram widget if enabled
-        if self.config.display.show_spectrogram:
-            self._create_spectrogram_widget()
+        # Always create spectrogram widget, but hide if not enabled
+        self._create_spectrogram_widget()
+
+        # Hide if not enabled in settings
+        if not self.config.display.show_spectrogram:
+            self.spec_frame.pack_forget()
+            self.ui_state.spectrogram_visible = False
 
 
     def _create_spectrogram_widget(self) -> None:
@@ -806,11 +848,24 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
                            lambda: self.root.focus_force())
 
     def show_info_overlay(self, file_path: Optional[Path] = None,
-                         is_recording: bool = False) -> None:
+                         is_recording: bool = False,
+                         recording_params: Optional[dict] = None) -> None:
         """Show or toggle the info overlay.
 
         Args:
             file_path: Path to audio file
             is_recording: Whether currently recording
+            recording_params: Recording parameters dict
         """
-        self.info_overlay.toggle(file_path, is_recording)
+        # Toggle visibility
+        self.info_overlay.toggle()
+
+        # If now visible, show with parameters after small delay
+        if self.info_overlay.visible:
+            self.root.after(10, lambda: self.info_overlay.show(file_path, is_recording, recording_params))
+
+    def _show_info_overlay_on_startup(self) -> None:
+        """Show info overlay on startup with current state."""
+        # Call app's update_info_overlay if available
+        if 'update_info_overlay' in self.app_callbacks:
+            self.app_callbacks['update_info_overlay']()

@@ -16,7 +16,11 @@ import librosa
 
 from ..constants import AudioConstants, UIConstants
 from ..audio.processor import MelSpectrogramProcessor, ClippingDetector
+from ..audio.mel_factory import MelProcessorFactory
+from ..ui.recording_display_state import RecordingDisplayState
+from ..ui.frequency_axis import FrequencyAxisManager
 from ..utils.config import AudioConfig, DisplayConfig
+from .recording_display_state import RecordingDisplayState
 
 
 class MelSpectrogramWidget:
@@ -70,42 +74,43 @@ class MelSpectrogramWidget:
 
         # Calculate derived values
         self.frames_per_second = audio_config.sample_rate / AudioConstants.HOP_LENGTH
-        self.spec_frames = int(display_config.display_seconds * self.frames_per_second)
+        # Always use SPECTROGRAM_DISPLAY_SECONDS for consistency
+        self.spec_frames = int(UIConstants.SPECTROGRAM_DISPLAY_SECONDS * self.frames_per_second)
         self.time_per_frame = AudioConstants.HOP_LENGTH / audio_config.sample_rate
 
-        # Initialize processors with adaptive parameters
-        # Set fmax to Nyquist frequency
-        nyquist_freq = audio_config.sample_rate / 2
-        adaptive_fmax = nyquist_freq  # Use full Nyquist frequency
+        if self.shared_state.get('debug', False):
+            print(f"Spectrogram frame calculation:")
+            print(f"  Sample rate: {audio_config.sample_rate} Hz")
+            print(f"  Hop length: {AudioConstants.HOP_LENGTH} samples")
+            print(f"  Frames per second: {self.frames_per_second:.2f}")
+            print(f"  Display seconds: {UIConstants.SPECTROGRAM_DISPLAY_SECONDS}")
+            print(f"  Total frames for display: {self.spec_frames}")
 
-        # Adjust n_mels based on actual frequency range and sample rate
-        freq_range = adaptive_fmax - display_config.fmin
-        # Scale n_mels proportionally to frequency range
-        # Base case: 96 mels for 24kHz range (48kHz sample rate)
-        base_range = 24000 - 50  # Original range
-        mel_scale_factor = freq_range / base_range
-        adaptive_n_mels = max(80, int(96 * mel_scale_factor))
+        # Initialize mel processor using factory
+        self.mel_processor, self.adaptive_n_mels = MelProcessorFactory.create_for_sample_rate(
+            audio_config.sample_rate,
+            display_config.fmin
+        )
 
-        self.mel_processor = MelSpectrogramProcessor(
-            sample_rate=audio_config.sample_rate,
-            n_mels=adaptive_n_mels,
-            fmin=display_config.fmin,
-            fmax=adaptive_fmax
+        # Get adaptive parameters for display
+        params = MelProcessorFactory.calculate_adaptive_params(
+            audio_config.sample_rate,
+            display_config.fmin
         )
 
         # Always print adaptive settings to show actual frequency range
         print(f"Mel spectrogram frequency range:")
-        print(f"  Sample rate: {audio_config.sample_rate} Hz (Nyquist: {nyquist_freq:.0f} Hz)")
-        print(f"  Frequency range: {display_config.fmin} - {adaptive_fmax:.0f} Hz")
-        print(f"  Mel bins: {adaptive_n_mels} (scaled from {display_config.n_mels})")
+        print(f"  Sample rate: {audio_config.sample_rate} Hz (Nyquist: {params['nyquist']:.0f} Hz)")
+        print(f"  Frequency range: {display_config.fmin} - {params['fmax']:.0f} Hz")
+        print(f"  Mel bins: {self.adaptive_n_mels} (scaled from {display_config.n_mels})")
 
         self.clipping_detector = ClippingDetector(
             sample_rate=audio_config.sample_rate,
             normalization_factor=audio_config.normalization_factor
         )
 
-        # Store adaptive n_mels for buffer initialization
-        self.adaptive_n_mels = adaptive_n_mels
+        # Initialize recording display state early (needed by display methods)
+        self.recording_state = RecordingDisplayState()
 
         # Initialize buffers
         self._init_buffers()
@@ -113,7 +118,7 @@ class MelSpectrogramWidget:
         # Initialize display
         self._init_display()
 
-        # Initialize state
+        # Initialize state (needs ax from display)
         self._init_state()
 
     def _init_buffers(self) -> None:
@@ -154,6 +159,9 @@ class MelSpectrogramWidget:
         # Configure axes
         self._configure_axes()
 
+        # Initialize frequency axis manager (needs ax)
+        self.freq_axis_manager = FrequencyAxisManager(self.ax)
+
         # Create spectrogram image
         self.im = self.ax.imshow(
             self.spec_buffer,
@@ -169,7 +177,11 @@ class MelSpectrogramWidget:
             print(f"Initial spec_buffer range: [{np.min(self.spec_buffer):.1f}, {np.max(self.spec_buffer):.1f}]")
 
         # Set initial frequency axis
-        self._update_frequency_axis()
+        self.freq_axis_manager.update_default_axis(
+            self.adaptive_n_mels,
+            self.mel_processor.fmin,
+            self.mel_processor.actual_fmax
+        )
 
         # Set initial time axis
         self._update_time_axis(0, UIConstants.SPECTROGRAM_DISPLAY_SECONDS)
@@ -245,68 +257,15 @@ class MelSpectrogramWidget:
         # Frequency detection
         self.max_detected_freq = 0.0
 
+        # Recording display state was already initialized in constructor
+
     def _update_frequency_axis(self) -> None:
-        """Update frequency axis labels.
-
-        Maps mel bin indices to frequency values in Hz for
-        the y-axis labels using logarithmic spacing.
-        """
-        # Get mel scale frequencies using actual processor settings
-        mel_freqs = librosa.mel_frequencies(
-            n_mels=self.adaptive_n_mels + 2,  # +2 for edge bins
-            fmin=self.mel_processor.fmin,
-            fmax=self.mel_processor.actual_fmax
-        )[1:-1]  # Remove edge bins
-
-        # Select frequencies to display with more emphasis on lower frequencies
-        # Create custom spacing with more ticks in lower frequencies
-        n_ticks = UIConstants.N_FREQUENCY_TICKS
-
-        # Split ticks: more in lower half, fewer in upper half
-        lower_ticks = int(n_ticks * 0.6)  # 60% of ticks for lower frequencies
-        upper_ticks = n_ticks - lower_ticks
-
-        # Lower frequency range (0 to 1/3 of mel range) - more detail
-        lower_indices = np.linspace(0, self.adaptive_n_mels // 3,
-                                   lower_ticks, dtype=int)
-
-        # Upper frequency range (1/3 to end) - less detail
-        upper_indices = np.linspace(self.adaptive_n_mels // 3 + 1,
-                                   self.adaptive_n_mels - 1,
-                                   upper_ticks, dtype=int)
-
-        # Combine and ensure uniqueness
-        log_indices = np.unique(np.concatenate([lower_indices, upper_indices]))
-
-        # Always include first and last
-        log_indices[0] = 0
-        log_indices[-1] = self.adaptive_n_mels - 1
-
-        yticks = log_indices
-        yticklabels = []
-        for i, idx in enumerate(log_indices):
-            freq = mel_freqs[idx]
-            # For the last tick, show the actual Nyquist frequency
-            if i == len(log_indices) - 1:
-                # Use the actual max frequency from the processor
-                freq = self.mel_processor.actual_fmax
-
-            if freq < 1000:
-                yticklabels.append(f'{int(freq)}')
-            else:
-                # Use appropriate precision based on value
-                if freq == int(freq / 1000) * 1000:  # If it's a round number in kHz
-                    yticklabels.append(f'{int(freq/1000)}k')
-                else:
-                    yticklabels.append(f'{freq/1000:.1f}k')
-
-        self.ax.set_yticks(yticks)
-        self.ax.set_yticklabels(yticklabels)
-
-        # Reset all labels to default color and weight
-        for label in self.ax.get_yticklabels():
-            label.set_color(UIConstants.COLOR_TEXT_INACTIVE)
-            label.set_weight('normal')
+        """Update frequency axis labels using the axis manager."""
+        self.freq_axis_manager.update_default_axis(
+            self.adaptive_n_mels,
+            self.mel_processor.fmin,
+            self.mel_processor.actual_fmax
+        )
 
     def _update_frequency_axis_for_recording(self, sample_rate: int) -> None:
         """Update frequency axis labels for a specific recording's sample rate.
@@ -314,162 +273,47 @@ class MelSpectrogramWidget:
         Args:
             sample_rate: The sample rate of the recording being displayed
         """
-        # Calculate parameters for this recording
-        nyquist_freq = sample_rate / 2
-        adaptive_fmax = nyquist_freq
-
-        # Adjust n_mels based on actual frequency range and sample rate
-        freq_range = adaptive_fmax - self.display_config.fmin
-        base_range = 24000 - 50  # Original range
-        mel_scale_factor = freq_range / base_range
-        adaptive_n_mels = max(80, int(96 * mel_scale_factor))
-
-        # Get mel scale frequencies for this recording
-        mel_freqs = librosa.mel_frequencies(
-            n_mels=adaptive_n_mels + 2,
-            fmin=self.display_config.fmin,
-            fmax=adaptive_fmax
-        )[1:-1]
-
-        # Select frequencies to display with more emphasis on lower frequencies
-        n_ticks = UIConstants.N_FREQUENCY_TICKS
-        lower_ticks = int(n_ticks * 0.6)
-        upper_ticks = n_ticks - lower_ticks
-
-        # Lower frequency range (0 to 1/3 of mel range) - more detail
-        lower_indices = np.linspace(0, adaptive_n_mels // 3,
-                                   lower_ticks, dtype=int)
-
-        # Upper frequency range (1/3 to end) - less detail
-        upper_indices = np.linspace(adaptive_n_mels // 3 + 1,
-                                   adaptive_n_mels - 1,
-                                   upper_ticks, dtype=int)
-
-        # Combine and ensure uniqueness
-        log_indices = np.unique(np.concatenate([lower_indices, upper_indices]))
-
-        # Always include first and last
-        log_indices[0] = 0
-        log_indices[-1] = adaptive_n_mels - 1
-
-        yticks = log_indices
-        yticklabels = []
-        for i, idx in enumerate(log_indices):
-            freq = mel_freqs[idx]
-            # For the last tick, show the actual Nyquist frequency
-            if i == len(log_indices) - 1:
-                # Use the actual max frequency (Nyquist)
-                freq = adaptive_fmax
-
-            if freq < 1000:
-                yticklabels.append(f'{int(freq)}')
-            else:
-                # Use appropriate precision based on value
-                if freq == int(freq / 1000) * 1000:  # If it's a round number in kHz
-                    yticklabels.append(f'{int(freq/1000)}k')
-                else:
-                    yticklabels.append(f'{freq/1000:.1f}k')
-
-        self.ax.set_yticks(yticks)
-        self.ax.set_yticklabels(yticklabels)
-
-        # Reset all labels to default color and weight
-        for label in self.ax.get_yticklabels():
-            label.set_color(UIConstants.COLOR_TEXT_INACTIVE)
-            label.set_weight('normal')
+        # Use frequency axis manager to update axis and get adaptive parameters
+        adaptive_n_mels, adaptive_fmax = self.freq_axis_manager.update_recording_axis(
+            sample_rate,
+            self.display_config.fmin
+        )
 
         # Store the adaptive n_mels for this recording
-        self.recording_n_mels = adaptive_n_mels
+        self.recording_state.n_mels = adaptive_n_mels
 
     def _update_frequency_axis_with_max(self) -> None:
         """Update frequency axis to include max detected frequency."""
         if self.shared_state.get('debug', False):
             print(f"_update_frequency_axis_with_max called with max_detected_freq = {self.max_detected_freq:.1f} Hz")
 
-        # Get current ticks and labels
-        current_ticks = list(self.ax.get_yticks())
-        current_labels = [label.get_text() for label in self.ax.get_yticklabels()]
+        # Ensure max frequency is within valid range
+        nyquist = self.mel_processor.sample_rate / 2
+        if self.max_detected_freq > nyquist:
+            if self.shared_state.get('debug', False):
+                print(f"WARNING: max_detected_freq {self.max_detected_freq} > Nyquist {nyquist}, clamping")
+            self.max_detected_freq = nyquist
 
         # Use recording n_mels if available (when showing a file), otherwise use adaptive_n_mels (live recording)
-        n_mels = getattr(self, 'recording_n_mels', self.adaptive_n_mels)
+        n_mels = self.recording_state.n_mels if self.recording_state.is_active() else self.adaptive_n_mels
 
         # Get appropriate frequency parameters
-        if hasattr(self, 'recording_mel_processor'):
+        if self.recording_state.is_active():
             # Use recording-specific processor
-            fmin = self.recording_mel_processor.fmin
-            fmax = self.recording_mel_processor.actual_fmax
+            fmin = self.recording_state.mel_processor.fmin
+            fmax = self.recording_state.mel_processor.actual_fmax
         else:
             # Use default processor for live recording
             fmin = self.mel_processor.fmin
             fmax = self.mel_processor.actual_fmax
 
-        # Find mel bin for max frequency
-        mel_freqs = librosa.mel_frequencies(
-            n_mels=n_mels + 2,
-            fmin=fmin,
-            fmax=fmax
-        )[1:-1]
-
-        # Find closest mel bin to max frequency
-        max_freq_bin = np.argmin(np.abs(mel_freqs - self.max_detected_freq))
-
-        # Check if we need to replace a nearby tick or add a new one
-        min_distance = n_mels / 20  # At least 5% separation
-        replace_idx = None
-
-        # Find if any existing tick is too close
-        for i, tick in enumerate(current_ticks):
-            if abs(tick - max_freq_bin) < min_distance:
-                # Replace the closest tick with the max frequency
-                replace_idx = i
-                break
-
-        if 0 <= max_freq_bin < n_mels:
-            if replace_idx is not None:
-                # Replace the nearby tick with max frequency
-                all_ticks = current_ticks.copy()
-                all_ticks[replace_idx] = max_freq_bin
-                all_labels = []
-
-                for i, tick in enumerate(all_ticks):
-                    if i == replace_idx:
-                        # Format max frequency in orange
-                        if self.max_detected_freq < 1000:
-                            label = f'{int(self.max_detected_freq)}'
-                        else:
-                            label = f'{self.max_detected_freq/1000:.1f}k'
-                        all_labels.append(label)
-                    else:
-                        all_labels.append(current_labels[i])
-            else:
-                # Add the max frequency tick
-                all_ticks = sorted(current_ticks + [max_freq_bin])
-                all_labels = []
-
-                for tick in all_ticks:
-                    if tick == max_freq_bin:
-                        # Format max frequency in orange
-                        if self.max_detected_freq < 1000:
-                            label = f'{int(self.max_detected_freq)}'
-                        else:
-                            label = f'{self.max_detected_freq/1000:.1f}k'
-                        all_labels.append(label)
-                    else:
-                        # Find original label
-                        orig_idx = current_ticks.index(tick)
-                        all_labels.append(current_labels[orig_idx])
-
-            # Update ticks and labels
-            self.ax.set_yticks(all_ticks)
-            self.ax.set_yticklabels(all_labels)
-
-            # Color the max frequency label orange
-            for i, (tick, label) in enumerate(zip(all_ticks, self.ax.get_yticklabels())):
-                if (replace_idx is not None and i == replace_idx) or (replace_idx is None and tick == max_freq_bin):
-                    label.set_color('orange')
-                    label.set_weight('bold')
-                    if self.shared_state.get('debug', False):
-                        print(f"Set orange label at index {i}: '{label.get_text()}' for {self.max_detected_freq:.1f} Hz")
+        # Use frequency axis manager to highlight max frequency
+        self.freq_axis_manager.highlight_max_frequency(
+            self.max_detected_freq,
+            n_mels,
+            fmin,
+            fmax
+        )
 
     def _update_time_axis(self, start_time: float, end_time: float) -> None:
         """Update time axis labels.
@@ -479,7 +323,7 @@ class MelSpectrogramWidget:
             end_time: End time in seconds
         """
         # Use recording-specific frame count if available, otherwise use default
-        frames_to_use = getattr(self, 'recording_spec_frames', self.spec_frames)
+        frames_to_use = self.recording_state.spec_frames if self.recording_state.is_active() else self.spec_frames
 
         time_labels = np.linspace(start_time, end_time, UIConstants.N_TIME_TICKS)
         xticks = np.linspace(0, frames_to_use - 1, UIConstants.N_TIME_TICKS)
@@ -521,9 +365,6 @@ class MelSpectrogramWidget:
 
         self.update_counter += 1
 
-        # Update current time
-        self.current_time += chunk_size / self.audio_config.sample_rate
-
         # Check for clipping
         if self.clipping_detector.process(audio_chunk):
             clipping_pos = self.frame_count
@@ -533,17 +374,26 @@ class MelSpectrogramWidget:
                 if self.shared_state.get('debug', False):
                     print(f"Clipping detected at frame {clipping_pos}, time {self.current_time:.2f}s")
 
-        # Process spectrogram at reduced rate
-        if self.update_counter % 2 == 0:
-            # Extract frame for processing
-            frame = self.audio_buffer[-AudioConstants.N_FFT:]
+        # Track position in buffer for proper frame extraction
+        if not hasattr(self, 'buffer_position'):
+            self.buffer_position = 0
+
+        # Process frames based on buffer position
+        while self.buffer_position + AudioConstants.N_FFT <= len(self.audio_buffer):
+            # Extract frame at current position
+            frame = self.audio_buffer[self.buffer_position:self.buffer_position + AudioConstants.N_FFT]
 
             # Compute mel spectrogram
             mel_db, highest_freq = self.mel_processor.process(frame, self.audio_config.normalization_factor)
 
+            if highest_freq and self.frame_count % 50 == 0 and self.shared_state.get('debug', False):
+                print(f"Frame {self.frame_count}: Detected highest freq = {highest_freq:.1f} Hz")
+
             # Track maximum detected frequency
             if highest_freq and highest_freq > self.max_detected_freq:
                 self.max_detected_freq = highest_freq
+                if self.shared_state.get('debug', False):
+                    print(f"New max frequency detected: {highest_freq:.1f} Hz (processor sr={self.mel_processor.sample_rate})")
 
             # Debug: Print mel_db values periodically
             if self.frame_count % 50 == 0 and self.shared_state.get('debug', False):
@@ -555,15 +405,29 @@ class MelSpectrogramWidget:
             self.spec_buffer[:, -1] = mel_db
             self.frame_count += 1
 
-            # Schedule UI update
-            if not self.pending_update:
-                self.pending_update = True
-                if self.shared_state.get('debug', False):
-                    print(f"Scheduling UI update for frame {self.frame_count}")
-                self.parent.after(0, self._update_display)
-            else:
-                if self.shared_state.get('debug', False):
-                    print(f"UI update already pending for frame {self.frame_count}")
+            # Move position by hop_length for next frame
+            self.buffer_position += AudioConstants.HOP_LENGTH
+
+        # Adjust buffer position when rolling
+        self.buffer_position -= chunk_size
+
+        # Update current time based on frame count
+        # Each frame represents hop_length samples
+        self.current_time = (self.frame_count * AudioConstants.HOP_LENGTH) / self.audio_config.sample_rate
+
+        # Schedule UI update at reduced rate to avoid overwhelming the GUI
+        # Calculate UI update interval based on animation update rate
+        # ANIMATION_UPDATE_MS gives us the desired milliseconds between updates
+        target_ui_fps = 1000.0 / UIConstants.ANIMATION_UPDATE_MS  # Convert ms to FPS
+        ui_update_interval = max(1, int(self.frames_per_second / target_ui_fps))
+
+        if self.frame_count % ui_update_interval == 0 and not self.pending_update:
+            self.pending_update = True
+            if self.shared_state.get('debug', False):
+                print(f"Scheduling UI update for frame {self.frame_count}")
+            self.parent.after(0, self._update_display)
+        elif self.pending_update and self.shared_state.get('debug', False):
+            print(f"UI update already pending for frame {self.frame_count}")
 
     def _update_display(self) -> None:
         """Update display in main thread.
@@ -631,8 +495,9 @@ class MelSpectrogramWidget:
         # Update warning
         self._update_clipping_warning()
 
-        # Update frequency display
-        self._update_frequency_display()
+        # Update frequency display only if we're recording or playing
+        if self.is_recording or self.is_playing:
+            self._update_frequency_display()
 
     def _add_clipping_line(self, x_position: int) -> None:
         """Add a clipping marker line at the specified position.
@@ -691,16 +556,10 @@ class MelSpectrogramWidget:
         self.update_counter = 0  # Reset update counter
         self.clipping_markers = []
         self.max_detected_freq = 0.0
+        self.buffer_position = 0  # Reset buffer position
 
-        # Clear any recording-specific attributes
-        if hasattr(self, 'recording_mel_processor'):
-            delattr(self, 'recording_mel_processor')
-        if hasattr(self, 'recording_n_mels'):
-            delattr(self, 'recording_n_mels')
-        if hasattr(self, 'recording_spec_frames'):
-            delattr(self, 'recording_spec_frames')
-        if hasattr(self, 'recording_sample_rate'):
-            delattr(self, 'recording_sample_rate')
+        # Clear any recording-specific state
+        self.recording_state.clear()
 
         # Reset to default frequency axis for live recording
         self._update_frequency_axis()
@@ -727,7 +586,13 @@ class MelSpectrogramWidget:
         Args:
             duration: Total duration of the audio being played
         """
-        self.stop_playback()  # Stop any existing playback
+        # Ensure any existing playback is completely stopped
+        self.stop_playback()
+
+        # Clear any pending animation callbacks
+        if self.animation_id:
+            self.parent.after_cancel(self.animation_id)
+            self.animation_id = None
 
         self.is_playing = True
         self.playback_duration = duration
@@ -755,8 +620,13 @@ class MelSpectrogramWidget:
         """
         self.is_playing = False
 
+        # Cancel any pending animation callbacks
         if self.animation_id:
-            self.parent.after_cancel(self.animation_id)
+            try:
+                self.parent.after_cancel(self.animation_id)
+            except ValueError:
+                # Callback might have already been executed
+                pass
             self.animation_id = None
 
         if self.playback_line:
@@ -779,7 +649,7 @@ class MelSpectrogramWidget:
 
         if self.playback_duration > 0:
             # Use recording-specific frame count if available
-            frames_to_use = getattr(self, 'recording_spec_frames', self.spec_frames)
+            frames_to_use = self.recording_state.spec_frames if self.recording_state.is_active() else self.spec_frames
 
             # Calculate position
             if self.playback_duration < UIConstants.SPECTROGRAM_DISPLAY_SECONDS:
@@ -791,8 +661,14 @@ class MelSpectrogramWidget:
             self.playback_line.set_xdata([x_pos])
             self.canvas.draw_idle()
 
-        # Continue animation
-        if self.playback_position < self.playback_duration:
+        # Continue animation only if still playing
+        if self.is_playing and self.playback_position < self.playback_duration:
+            # Cancel any existing callback before scheduling new one
+            if self.animation_id:
+                try:
+                    self.parent.after_cancel(self.animation_id)
+                except ValueError:
+                    pass
             self.animation_id = self.parent.after(
                 UIConstants.ANIMATION_UPDATE_MS,
                 self._update_playback_position
@@ -811,15 +687,8 @@ class MelSpectrogramWidget:
         self.clipping_markers = []
         self.max_detected_freq = 0.0
 
-        # Clear any recording-specific attributes
-        if hasattr(self, 'recording_mel_processor'):
-            delattr(self, 'recording_mel_processor')
-        if hasattr(self, 'recording_n_mels'):
-            delattr(self, 'recording_n_mels')
-        if hasattr(self, 'recording_spec_frames'):
-            delattr(self, 'recording_spec_frames')
-        if hasattr(self, 'recording_sample_rate'):
-            delattr(self, 'recording_sample_rate')
+        # Clear any recording-specific state
+        self.recording_state.clear()
 
         # Remove markers
         for line in self.ax.lines[:]:
@@ -880,6 +749,9 @@ class MelSpectrogramWidget:
         )
 
         if self.shared_state.get('debug', False):
+            print(f"Created recording mel processor: fmax param={adaptive_fmax}, actual_fmax={recording_mel_processor.actual_fmax}")
+
+        if self.shared_state.get('debug', False):
             print(f"Recording mel spectrogram settings:")
             print(f"  Sample rate: {sample_rate} Hz (Nyquist: {nyquist_freq} Hz)")
             print(f"  Frequency range: {self.display_config.fmin} - {adaptive_fmax:.0f} Hz")
@@ -896,14 +768,15 @@ class MelSpectrogramWidget:
         if self.shared_state.get('debug', False):
             print(f"Detected {len(self.clipping_markers)} clipping positions")
 
+        # Store the recording processor in state
+        self.recording_state.mel_processor = recording_mel_processor
+        self.recording_state.sample_rate = sample_rate
+
         # Process spectrogram using recording-specific processor
         result = recording_mel_processor.process_file(
             audio_data,
             recording_mel_processor.normalization_factor if hasattr(recording_mel_processor, 'normalization_factor') else None
         )
-
-        # Store the recording processor for frequency axis updates
-        self.recording_mel_processor = recording_mel_processor
 
         # Handle both old and new return formats
         if len(result) == 3:
@@ -923,8 +796,7 @@ class MelSpectrogramWidget:
         recording_display_frames = n_frames
 
         # Store for playback animation
-        self.recording_spec_frames = recording_display_frames
-        self.recording_sample_rate = sample_rate
+        self.recording_state.spec_frames = recording_display_frames
 
         # Create a new spec buffer with the correct mel bins and actual frames
         recording_spec_buffer = mel_spec

@@ -36,6 +36,7 @@ class AudioConstants:
     CLIPPING_THRESHOLD = 0.99  # 99% of maximum value
     AUDIO_CHUNK_SIZE = 1024
     MIN_CLIPPING_MARKER_DISTANCE = 5  # Frames between markers
+    FREQUENCY_NOISE_FLOOR_DB = -50  # dB threshold for max frequency detection (-60 = more sensitive, -40 = less sensitive)
 
     # Normalization factors
     NORM_FACTOR_16BIT = 32768.0  # 2^15

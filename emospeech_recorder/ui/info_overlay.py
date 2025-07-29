@@ -127,19 +127,23 @@ class InfoOverlay:
             print(f"Error reading file info: {e}")
             return None
 
-    def show(self, file_path: Optional[Path] = None, is_recording: bool = False) -> None:
+    def show(self, file_path: Optional[Path] = None, is_recording: bool = False,
+             recording_params: Optional[dict] = None) -> None:
         """Show the overlay with file information.
 
         Args:
             file_path: Path to audio file
             is_recording: Whether currently recording
+            recording_params: Dict with recording parameters (sample_rate, bit_depth, channels)
         """
-        if is_recording:
-            # Show minimal info during recording
-            self.sample_rate_label.config(text="Recording...")
-            self.bit_depth_label.config(text="")
-            self.format_label.config(text="")
-            self.duration_label.config(text="")
+        if is_recording and recording_params:
+            # Show actual recording parameters
+            self.sample_rate_label.config(text=f"{recording_params.get('sample_rate', 48000)} Hz")
+            self.bit_depth_label.config(text=f"{recording_params.get('bit_depth', 24)} bit")
+            channels = recording_params.get('channels', 1)
+            channel_text = "Mono" if channels == 1 else "Stereo"
+            self.format_label.config(text=f"Recording {channel_text}")
+            self.duration_label.config(text="Recording...")
             self.size_label.config(text="")
         elif file_path and file_path.exists():
             # Get file info
@@ -197,18 +201,16 @@ class InfoOverlay:
         self.frame.place_forget()
         self.visible = False
 
-    def toggle(self, file_path: Optional[Path] = None, is_recording: bool = False) -> None:
-        """Toggle overlay visibility.
-
-        Args:
-            file_path: Path to audio file
-            is_recording: Whether currently recording
-        """
+    def toggle(self) -> None:
+        """Toggle overlay visibility."""
         if self.visible:
             self.hide()
         else:
-            # Small delay to ensure proper rendering
-            self.parent.after(10, lambda: self.show(file_path, is_recording))
+            # Mark as visible but don't show content yet
+            # Content will be set by the caller
+            self.visible = True
+            # Place the frame to make it visible
+            self.frame.place(relx=0.98, rely=0.12, anchor='ne')
 
     def _position_overlay(self) -> None:
         """Position the overlay in the top-right corner."""
