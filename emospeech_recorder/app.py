@@ -17,6 +17,7 @@ from .constants import KeyBindings, UIConstants
 from .utils.config import RecorderConfig, load_config
 from .utils.state import AppState
 from .utils.file_manager import RecordingFileManager, ScriptFileManager
+from .utils.settings_manager import SettingsManager
 from .ui.main_window import MainWindow
 from .audio.recorder import record_process
 from .audio.player import playback_process, PlaybackController
@@ -59,6 +60,12 @@ class EmoSpeechRecorder:
         self.recording_dir = recording_dir
         self.debug = debug
 
+        # Initialize settings manager
+        self.settings_manager = SettingsManager()
+
+        # Apply saved settings to config
+        self._apply_saved_settings()
+
         # Initialize state
         self.state = AppState()
 
@@ -87,6 +94,22 @@ class EmoSpeechRecorder:
         # Load initial spectrogram after UI is ready (like in rec_improved.py)
         if hasattr(self.window, 'mel_spectrogram'):
             self.root.after(UIConstants.INITIAL_DISPLAY_DELAY_MS, self._show_saved_recording)
+
+    def _apply_saved_settings(self) -> None:
+        """Apply saved settings to configuration."""
+        settings = self.settings_manager.settings
+
+        # Apply audio settings
+        self.config.audio.sample_rate = settings.sample_rate
+        self.config.audio.bit_depth = settings.bit_depth
+        self.config.audio.__post_init__()  # Update dtype and subtype
+
+        # Apply display settings
+        self.config.display.show_spectrogram = settings.show_spectrogram
+        self.config.ui.fullscreen = settings.fullscreen
+
+        # Store window geometry for later use
+        self._saved_window_geometry = settings.window_geometry
 
     def _load_script(self) -> None:
         """Load and parse the script file."""
@@ -118,17 +141,56 @@ class EmoSpeechRecorder:
         self.shared_state['playing'] = False
         self.shared_state['audio_queue_active'] = self.config.display.show_spectrogram
         self.shared_state['save_path'] = None
-        print(f"Shared state initialized: audio_queue_active={self.shared_state['audio_queue_active']}")
 
     def _init_ui(self) -> None:
         """Initialize the user interface."""
-        self.root = tk.Tk()
+        # For macOS: Set the process name before creating any windows
+        if platform.system() == 'Darwin':
+            try:
+                # Try using PyObjC to set the application name
+                from AppKit import NSApp, NSApplication
+                NSApplication.sharedApplication()
+                NSApp.setActivationPolicy_(0)  # NSApplicationActivationPolicyRegular
+
+                # Set the application name
+                from Foundation import NSProcessInfo
+                NSProcessInfo.processInfo().setValue_forKey_('EmoSpeech Recorder', 'processName')
+            except ImportError:
+                # PyObjC not available, try ctypes approach
+                try:
+                    import ctypes
+                    import ctypes.util
+
+                    # Load the Foundation framework
+                    foundation = ctypes.cdll.LoadLibrary(ctypes.util.find_library('Foundation'))
+
+                    # Get the current process info
+                    objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library('objc'))
+
+                    # Set process name using low-level approach
+                    libc = ctypes.CDLL('/usr/lib/libc.dylib')
+                    title = b'EmoSpeech Recorder\0'
+                    libc.setproctitle(title)
+                except Exception:
+                    pass
+
+        self.root = tk.Tk(className='EmoSpeech Recorder')
+        self.root.title("EmoSpeech Recorder")
+
+        # Create callbacks for menu actions
+        app_callbacks = {
+            'toggle_mel_spectrogram': self._toggle_mel_spectrogram,
+            'update_audio_settings': self._update_audio_settings
+        }
+
         self.window = MainWindow(
             self.root,
             self.config,
             self.state.recording,
             self.state.ui,
-            self.shared_state
+            self.shared_state,
+            app_callbacks,
+            self.settings_manager
         )
 
         # Initialize playback controller
@@ -165,6 +227,8 @@ class EmoSpeechRecorder:
         self.root.bind(f'<{KeyBindings.DELETE_RECORDING}>', lambda e: self._delete_current_recording())
         self.root.bind(f'<{KeyBindings.QUIT}>', lambda e: self._quit())
         self.root.bind(f'<{KeyBindings.TOGGLE_FULLSCREEN}>', lambda e: self.window.toggle_fullscreen())
+        self.root.bind(f'<{KeyBindings.SHOW_HELP}>', lambda e: self.window._show_keyboard_shortcuts())
+        self.root.bind(f'<{KeyBindings.SHOW_INFO}>', lambda e: self._show_info_overlay())
 
         # Window close event
         self.root.protocol("WM_DELETE_WINDOW", self._quit)
@@ -211,12 +275,10 @@ class EmoSpeechRecorder:
                     if "closed" not in str(e).lower():
                         print(f"Error in audio transfer thread: {e}")
                     break
-            print("Audio transfer thread ended")
 
         self.transfer_thread = threading.Thread(target=audio_transfer_thread)
         self.transfer_thread.daemon = True
         self.transfer_thread.start()
-        print("Audio transfer thread started successfully")
 
 
     def _toggle_recording(self) -> None:
@@ -286,6 +348,11 @@ class EmoSpeechRecorder:
         # Update display
         self._update_display()
 
+        # Update info overlay if visible to show the new recording
+        if self.window.info_overlay.visible:
+            # Wait a bit for the file to be saved
+            self.root.after(UIConstants.POST_RECORDING_DELAY_MS, self._update_info_overlay)
+
     def _play_current(self) -> None:
         """Play current recording."""
         if not self.state.is_ready_to_play():
@@ -336,6 +403,10 @@ class EmoSpeechRecorder:
             # Update display
             self._update_display()
 
+            # Update info overlay if visible
+            if self.window.info_overlay.visible:
+                self._update_info_overlay()
+
     def _browse_takes(self, direction: int) -> None:
         """Browse through different takes."""
         current_label = self.state.recording.current_label
@@ -376,6 +447,10 @@ class EmoSpeechRecorder:
             self.state.recording.set_displayed_take(current_label, new_take)
             self._show_saved_recording()
             self._update_take_status()
+
+            # Update info overlay if visible
+            if self.window.info_overlay.visible:
+                self._update_info_overlay()
         else:
             # No more takes in that direction
             direction_text = "forward" if direction > 0 else "backward"
@@ -440,6 +515,73 @@ class EmoSpeechRecorder:
             self._start_audio_queue_processing()
             # Show current recording if available
             self.root.after(50, self._show_saved_recording)
+
+        # Save the preference
+        self.settings_manager.update_setting('show_spectrogram', self.state.ui.spectrogram_visible)
+
+    def _show_info_overlay(self) -> None:
+        """Show audio info overlay with current recording information."""
+        current_label = self.state.recording.current_label
+        if not current_label:
+            # No utterance selected
+            self.window.show_info_overlay(is_recording=self.state.recording.is_recording)
+            return
+
+        if self.state.recording.is_recording:
+            # Currently recording - show minimal info
+            self.window.show_info_overlay(is_recording=True)
+        else:
+            # Not recording - show info for current take (the one that would play with P)
+            current_take = self.state.recording.get_current_take(current_label)
+
+            if current_take > 0:
+                # Get file path
+                filepath = self.file_manager.get_recording_path(current_label, current_take)
+                self.window.show_info_overlay(file_path=filepath, is_recording=False)
+            else:
+                # No recording for this utterance
+                self.window.show_info_overlay(is_recording=False)
+
+    def _update_info_overlay(self) -> None:
+        """Update the info overlay with current file information.
+
+        This is called when navigating to update the overlay without toggling it.
+        """
+        current_label = self.state.recording.current_label
+        if not current_label:
+            return
+
+        # Get current take that would play with P
+        current_take = self.state.recording.get_current_take(current_label)
+
+        if current_take > 0:
+            # Get file path
+            filepath = self.file_manager.get_recording_path(current_label, current_take)
+            # Update overlay without toggling visibility
+            self.window.info_overlay.show(file_path=filepath, is_recording=False)
+        else:
+            # No recording - update to show no recording
+            self.window.info_overlay.show(is_recording=False)
+
+    def _update_audio_settings(self) -> None:
+        """Handle audio settings changes.
+
+        Restarts audio processes with new settings.
+        """
+        # Stop current processes
+        self.record_queue.put('quit')
+        self.playback_queue.put('quit')
+
+        # Wait for processes to finish
+        self.record_process.join(timeout=1)
+        self.playback_process.join(timeout=1)
+
+        # Restart processes with new settings
+        self._start_processes()
+
+        # Restart audio queue processing if needed
+        if self.config.display.show_spectrogram and hasattr(self.window, 'mel_spectrogram'):
+            self._start_audio_queue_processing()
 
     def _delete_current_recording(self) -> None:
         """Delete the current recording take."""
@@ -510,12 +652,20 @@ class EmoSpeechRecorder:
         """Clean shutdown of the application."""
         print("Shutting down...")
 
+        # Save window geometry if not fullscreen
+        if not self.root.attributes('-fullscreen'):
+            self.settings_manager.update_setting('window_geometry', self.root.geometry())
+
         # Stop recording if active
         if self.state.recording.is_recording:
             self._stop_recording()
 
         # Stop audio queue processing
         self.shared_state['audio_queue_active'] = False
+
+        # Wait for audio transfer thread to finish
+        if hasattr(self, 'transfer_thread') and self.transfer_thread.is_alive():
+            self.transfer_thread.join(timeout=0.5)
 
         # Stop processes
         self.record_queue.put('quit')

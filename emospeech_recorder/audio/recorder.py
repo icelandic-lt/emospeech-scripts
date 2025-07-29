@@ -81,9 +81,19 @@ class AudioRecorder:
             blocksize=AudioConstants.AUDIO_CHUNK_SIZE,
             samplerate=self.config.sample_rate,
             channels=self.config.channels,
-            dtype=self.config.dtype
+            dtype=self.config.dtype,
+            device=self.config.input_device
         )
         self.stream.start()
+
+        # Debug: Print actual stream settings
+        if self.shared_state.get('debug', False):
+            print(f"Recording stream started with:")
+            print(f"  Requested sample rate: {self.config.sample_rate} Hz")
+            print(f"  Actual sample rate: {self.stream.samplerate} Hz")
+            print(f"  Device: {self.stream.device}")
+            print(f"  Channels: {self.stream.channels}")
+            print(f"  dtype: {self.stream.dtype}")
 
     def stop_recording(self) -> np.ndarray:
         """Stop recording and return audio data.

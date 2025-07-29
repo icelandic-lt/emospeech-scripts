@@ -3,12 +3,15 @@
 from typing import Optional, Callable
 import tkinter as tk
 from tkinter import ttk
+from pathlib import Path
 
 from ..constants import UIConstants, KeyBindings
 from ..utils.config import UIConfig, RecorderConfig
 from ..utils.state import UIState, RecordingState
+from ..utils.settings_manager import SettingsManager
 from .spectrogram import MelSpectrogramWidget
 from .icon import AppIcon
+from .info_overlay import InfoOverlay
 
 
 class MainWindow:
@@ -40,7 +43,9 @@ class MainWindow:
                  config: RecorderConfig,
                  recording_state: RecordingState,
                  ui_state: UIState,
-                 shared_state: dict = None):
+                 shared_state: dict = None,
+                 app_callbacks: dict = None,
+                 settings_manager: Optional[SettingsManager] = None):
         """Initialize the main window.
 
         Args:
@@ -48,12 +53,17 @@ class MainWindow:
             config: Application configuration with display and UI settings
             recording_state: Recording state manager tracking current utterance
             ui_state: UI state manager for window properties
+            shared_state: Shared state dictionary
+            app_callbacks: Application callbacks
+            settings_manager: Settings manager for persisting preferences
         """
         self.root = root
         self.config = config
         self.recording_state = recording_state
         self.ui_state = ui_state
         self.shared_state = shared_state or {}
+        self.app_callbacks = app_callbacks or {}
+        self.settings_manager = settings_manager or SettingsManager()
 
         # Get screen information
         self._setup_screen_geometry()
@@ -61,8 +71,14 @@ class MainWindow:
         # Configure window
         self._setup_window()
 
+        # Create menu bar
+        self._create_menu()
+
         # Create UI elements
         self._create_ui()
+
+        # Create info overlay
+        self.info_overlay = InfoOverlay(self.root)
 
         # Bind resize events
         self.root.bind('<Configure>', self._on_window_resize)
@@ -119,13 +135,22 @@ class MainWindow:
             self.ui_state.window_width = self.ui_state.screen_width
             self.ui_state.window_height = self.ui_state.screen_height
         else:
-            # Set window size
-            self.root.geometry(f"{self.ui_state.window_width}x{self.ui_state.window_height}")
+            # Try to restore saved geometry
+            saved_geometry = self.settings_manager.settings.window_geometry
+            if saved_geometry:
+                self.root.geometry(saved_geometry)
+                # Update state from saved geometry
+                parts = saved_geometry.split('+')[0].split('x')
+                self.ui_state.window_width = int(parts[0])
+                self.ui_state.window_height = int(parts[1])
+            else:
+                # Set window size
+                self.root.geometry(f"{self.ui_state.window_width}x{self.ui_state.window_height}")
 
-            # Center window
-            x = (self.ui_state.screen_width - self.ui_state.window_width) // 2
-            y = (self.ui_state.screen_height - self.ui_state.window_height) // 2
-            self.root.geometry(f"{self.ui_state.window_width}x{self.ui_state.window_height}+{x}+{y}")
+                # Center window
+                x = (self.ui_state.screen_width - self.ui_state.window_width) // 2
+                y = (self.ui_state.screen_height - self.ui_state.window_height) // 2
+                self.root.geometry(f"{self.ui_state.window_width}x{self.ui_state.window_height}+{x}+{y}")
 
         # Set minimum window size
         self.root.minsize(800, 600)
@@ -138,6 +163,193 @@ class MainWindow:
         # Set window icon
         self._set_window_icon()
 
+    def _create_menu(self) -> None:
+        """Create the application menu bar.
+
+        Creates a menu bar with File, View, and Help menus.
+        """
+        self.menubar = tk.Menu(self.root)
+        self.root.config(menu=self.menubar)
+
+        # File menu
+        file_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Quit", command=self.root.quit, accelerator="Q")
+
+        # View menu
+        view_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="View", menu=view_menu)
+
+        # Mel Spectrogram checkbutton
+        self.mel_spectrogram_var = tk.BooleanVar(value=self.config.display.show_spectrogram)
+        view_menu.add_checkbutton(
+            label="Show Mel Spectrogram",
+            variable=self.mel_spectrogram_var,
+            command=self._toggle_mel_spectrogram_callback,
+            accelerator="M"
+        )
+
+        # Fullscreen checkbutton
+        self.fullscreen_var = tk.BooleanVar(value=self.config.ui.fullscreen)
+        view_menu.add_checkbutton(
+            label="Fullscreen",
+            variable=self.fullscreen_var,
+            command=self._toggle_fullscreen_callback,
+            accelerator="F10"
+        )
+
+        # Settings menu
+        settings_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Settings", menu=settings_menu)
+
+        # Audio settings submenu
+        audio_menu = tk.Menu(settings_menu, tearoff=0)
+        settings_menu.add_cascade(label="Audio", menu=audio_menu)
+
+        # Sample Rate submenu
+        sample_rate_menu = tk.Menu(audio_menu, tearoff=0)
+        audio_menu.add_cascade(label="Sample Rate", menu=sample_rate_menu)
+
+        self.sample_rate_var = tk.IntVar(value=self.config.audio.sample_rate)
+        for rate in [16000, 22050, 44100, 48000, 96000]:
+            sample_rate_menu.add_radiobutton(
+                label=f"{rate} Hz",
+                variable=self.sample_rate_var,
+                value=rate,
+                command=lambda r=rate: self._on_sample_rate_change(r)
+            )
+
+        # Bit Depth submenu
+        bit_depth_menu = tk.Menu(audio_menu, tearoff=0)
+        audio_menu.add_cascade(label="Bit Depth", menu=bit_depth_menu)
+
+        self.bit_depth_var = tk.IntVar(value=self.config.audio.bit_depth)
+        for depth in [16, 24]:
+            bit_depth_menu.add_radiobutton(
+                label=f"{depth} bit",
+                variable=self.bit_depth_var,
+                value=depth,
+                command=lambda d=depth: self._on_bit_depth_change(d)
+            )
+
+        # Help menu
+        help_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="Keyboard Shortcuts", command=self._show_keyboard_shortcuts, accelerator="H")
+        help_menu.add_separator()
+        help_menu.add_command(label="About", command=self._show_about)
+
+    def _show_keyboard_shortcuts(self) -> None:
+        """Show keyboard shortcuts in a dialog window."""
+        shortcuts_window = tk.Toplevel(self.root)
+        shortcuts_window.title("Keyboard Shortcuts")
+        shortcuts_window.geometry("800x600")
+        shortcuts_window.resizable(False, False)
+
+        # Create text widget with shortcuts
+        text = tk.Text(shortcuts_window, wrap=tk.WORD, padx=30, pady=30,
+                      bg=UIConstants.COLOR_BACKGROUND,
+                      fg=UIConstants.COLOR_TEXT_NORMAL,
+                      font=('TkDefaultFont', 14))
+        text.pack(fill=tk.BOTH, expand=True)
+
+        # Add shortcuts text
+        shortcuts_text = """
+RECORDING CONTROLS:
+  SPACE    Start/Stop Recording
+  P        Play Current Recording
+  D        Delete Current Recording
+
+NAVIGATION:
+  ↑/↓      Navigate Previous/Next Utterance
+  ←/→      Browse Takes (Previous/Next)
+
+DISPLAY:
+  M        Toggle Mel Spectrogram
+  F10      Toggle Fullscreen
+  I        Show Audio Info Overlay
+
+GENERAL:
+  H        Show Keyboard Shortcuts (this window)
+  Q        Quit Application
+"""
+        text.insert('1.0', shortcuts_text)
+        text.config(state=tk.DISABLED)  # Make read-only
+
+        # Add close button
+        close_btn = tk.Button(shortcuts_window, text="Close",
+                            command=shortcuts_window.destroy)
+        close_btn.pack(pady=10)
+
+        # Focus the window
+        shortcuts_window.focus_set()
+
+    def _show_about(self) -> None:
+        """Show about dialog."""
+        about_window = tk.Toplevel(self.root)
+        about_window.title("About EmoSpeech Recorder")
+        about_window.geometry("400x200")
+        about_window.resizable(False, False)
+
+        about_text = """EmoSpeech Recorder
+
+A professional tool for recording emotional speech datasets.
+
+Used to create Talrómur 3, the Icelandic emotional speech dataset."""
+
+        label = tk.Label(about_window, text=about_text, justify=tk.CENTER,
+                        padx=20, pady=20)
+        label.pack(fill=tk.BOTH, expand=True)
+
+        close_btn = tk.Button(about_window, text="Close",
+                            command=about_window.destroy)
+        close_btn.pack(pady=10)
+
+        about_window.focus_set()
+
+    def _toggle_mel_spectrogram_callback(self) -> None:
+        """Callback for menu toggle mel spectrogram."""
+        # Use app callback if available, otherwise just toggle locally
+        if 'toggle_mel_spectrogram' in self.app_callbacks:
+            self.app_callbacks['toggle_mel_spectrogram']()
+        else:
+            self.toggle_spectrogram()
+
+    def _toggle_fullscreen_callback(self) -> None:
+        """Callback for menu toggle fullscreen."""
+        self.toggle_fullscreen()
+
+    def _on_sample_rate_change(self, rate: int) -> None:
+        """Handle sample rate change from menu.
+
+        Args:
+            rate: New sample rate in Hz
+        """
+        self.config.audio.sample_rate = rate
+        self.settings_manager.update_setting('sample_rate', rate)
+
+        # Notify app if callback available
+        if 'update_audio_settings' in self.app_callbacks:
+            self.app_callbacks['update_audio_settings']()
+
+        self.set_status(f"Sample rate changed to {rate} Hz")
+
+    def _on_bit_depth_change(self, depth: int) -> None:
+        """Handle bit depth change from menu.
+
+        Args:
+            depth: New bit depth (16 or 24)
+        """
+        self.config.audio.bit_depth = depth
+        self.config.audio.__post_init__()  # Update dtype and subtype
+        self.settings_manager.update_setting('bit_depth', depth)
+
+        # Notify app if callback available
+        if 'update_audio_settings' in self.app_callbacks:
+            self.app_callbacks['update_audio_settings']()
+
+        self.set_status(f"Bit depth changed to {depth} bit")
+
     def _set_window_icon(self) -> None:
         """Set the window icon.
 
@@ -146,7 +358,8 @@ class MainWindow:
         """
         try:
             # Try to create the icon
-            icon = AppIcon.create_icon()
+            icon_path = Path(__file__).parent.parent / "resources" / "microphone.png"
+            icon = AppIcon.create_icon(icon_path)
             if icon:
                 self.root.iconphoto(True, icon)
                 # For macOS dock icon
@@ -287,15 +500,6 @@ class MainWindow:
         if self.config.display.show_spectrogram:
             self._create_spectrogram_widget()
 
-        # Keyboard shortcuts help
-        help_text = "SPACE: Record | P: Play | ↑↓: Navigate | ←→: Browse Takes | D: Delete | M: Toggle Mel | Q: Quit | F11: Full"
-        self.help_label = tk.Label(
-            self.control_frame,
-            text=help_text,
-            fg=UIConstants.COLOR_TEXT_INACTIVE,
-            bg=UIConstants.COLOR_BACKGROUND
-        )
-        self.help_label.pack(side=tk.BOTTOM, pady=5)
 
     def _create_spectrogram_widget(self) -> None:
         """Create the mel spectrogram widget.
@@ -368,7 +572,6 @@ class MainWindow:
         self.status_label.config(font=small_font)
         self.rec_indicator.config(font=("Helvetica", self.ui_state.font_size_small, "bold"))
         self.progress_label.config(font=small_font)
-        self.help_label.config(font=small_font)
 
     def _on_window_resize(self, event: tk.Event) -> None:
         """Handle window resize events.
@@ -387,6 +590,10 @@ class MainWindow:
             # Recalculate and apply fonts
             self._calculate_font_sizes()
             self._apply_fonts()
+
+            # Update info overlay position if it exists
+            if hasattr(self, 'info_overlay'):
+                self.info_overlay.update_position()
 
     def update_display(self, index: int, is_recording: bool) -> None:
         """Update the display with current utterance.
@@ -426,52 +633,134 @@ class MainWindow:
 
         Switches between fullscreen and windowed modes, adjusting
         window dimensions and recalculating font sizes accordingly.
+        Saves window position before going fullscreen and restores
+        it when exiting fullscreen.
         """
         current = self.root.attributes('-fullscreen')
-        self.root.attributes('-fullscreen', not current)
 
         if not current:
-            self.ui_state.window_width = self.ui_state.screen_width
-            self.ui_state.window_height = self.ui_state.screen_height
+            self._enter_fullscreen()
         else:
+            self._exit_fullscreen()
+
+        # Update menu checkbutton
+        if hasattr(self, 'fullscreen_var'):
+            self.fullscreen_var.set(not current)
+
+        # Save preference
+        self.settings_manager.update_setting('fullscreen', not current)
+
+    def _enter_fullscreen(self) -> None:
+        """Enter fullscreen mode.
+
+        Saves current window geometry and switches to fullscreen.
+        """
+        # Save current geometry
+        self.ui_state.saved_window_geometry = self.root.geometry()
+
+        # Enter fullscreen
+        self.root.attributes('-fullscreen', True)
+
+        # Update window dimensions
+        self.ui_state.window_width = self.ui_state.screen_width
+        self.ui_state.window_height = self.ui_state.screen_height
+
+        # Trigger resize event
+        self._trigger_resize_event()
+
+    def _exit_fullscreen(self) -> None:
+        """Exit fullscreen mode.
+
+        Restores saved window geometry or applies default positioning.
+        Uses withdraw/deiconify to prevent visual artifacts.
+        """
+        # Hide window during transition to prevent black window flash
+        self.root.withdraw()
+
+        # Exit fullscreen
+        self.root.attributes('-fullscreen', False)
+
+        # Restore geometry
+        self._restore_window_geometry()
+
+        # Force window update and show window again
+        self.root.update_idletasks()
+        self.root.deiconify()
+
+        # Trigger resize event
+        self._trigger_resize_event()
+
+    def _restore_window_geometry(self) -> None:
+        """Restore window geometry after exiting fullscreen.
+
+        Uses saved geometry if available, otherwise centers window
+        with default dimensions.
+        """
+        if self.ui_state.saved_window_geometry:
+            # Restore saved position and size
+            self.root.geometry(self.ui_state.saved_window_geometry)
+            # Update window dimensions from saved geometry
+            parts = self.ui_state.saved_window_geometry.split('+')[0].split('x')
+            self.ui_state.window_width = int(parts[0])
+            self.ui_state.window_height = int(parts[1])
+        else:
+            # Fallback to default size centered
             self.ui_state.window_width = int(
                 self.ui_state.screen_width * UIConstants.DEFAULT_WINDOW_SIZE_RATIO
             )
             self.ui_state.window_height = int(
                 self.ui_state.screen_height * UIConstants.DEFAULT_WINDOW_SIZE_RATIO
             )
+            # Center window
+            x = (self.ui_state.screen_width - self.ui_state.window_width) // 2
+            y = (self.ui_state.screen_height - self.ui_state.window_height) // 2
+            self.root.geometry(f"{self.ui_state.window_width}x{self.ui_state.window_height}+{x}+{y}")
 
-        self._on_window_resize(tk.Event())
+    def _trigger_resize_event(self) -> None:
+        """Trigger a resize event to update fonts and layout."""
+        event = tk.Event()
+        event.widget = self.root
+        event.width = self.ui_state.window_width
+        event.height = self.ui_state.window_height
+        self._on_window_resize(event)
 
-    def toggle_spectrogram(self) -> None:
+    def toggle_spectrogram(self, update_external_state: Optional[Callable] = None) -> None:
         """Toggle mel spectrogram visibility.
 
         Shows or hides the mel spectrogram widget in the control area.
         Updates UI state and displays a status message.
+
+        Args:
+            update_external_state: Optional callback to update external state
         """
         if hasattr(self, 'spec_frame') and self.spec_frame:
             if self.spec_frame.winfo_viewable():
                 # Hide spectrogram
                 self.spec_frame.pack_forget()
                 self.ui_state.spectrogram_visible = False
-                self.set_status("Mel spectrogram hidden")
             else:
                 # Show spectrogram
                 self.spec_frame.pack(
                     fill=tk.BOTH,
                     expand=True,
                     padx=UIConstants.FRAME_SPACING,
-                    pady=(0, UIConstants.FRAME_SPACING),
-                    before=self.help_label
+                    pady=(0, UIConstants.FRAME_SPACING)
                 )
                 self.spec_frame.pack_propagate(False)
                 self.ui_state.spectrogram_visible = True
-                self.set_status("Mel spectrogram shown")
 
                 # Force redraw to avoid white display
                 if hasattr(self, 'mel_spectrogram') and self.mel_spectrogram:
                     self.root.update_idletasks()
                     self.mel_spectrogram.canvas.draw_idle()
+
+        # Update menu checkbutton
+        if hasattr(self, 'mel_spectrogram_var'):
+            self.mel_spectrogram_var.set(self.ui_state.spectrogram_visible)
+
+        # Call external state update if provided
+        if update_external_state:
+            update_external_state()
 
     def show_message(self, message: str, duration: int = 2000) -> None:
         """Show a temporary message.
@@ -515,3 +804,13 @@ class MainWindow:
         if platform.system() == 'Darwin':  # macOS
             self.root.after(UIConstants.FOCUS_DELAY_MS,
                            lambda: self.root.focus_force())
+
+    def show_info_overlay(self, file_path: Optional[Path] = None,
+                         is_recording: bool = False) -> None:
+        """Show or toggle the info overlay.
+
+        Args:
+            file_path: Path to audio file
+            is_recording: Whether currently recording
+        """
+        self.info_overlay.toggle(file_path, is_recording)

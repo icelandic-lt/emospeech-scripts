@@ -144,6 +144,8 @@ class KeyBindings:
     TOGGLE_SPECTROGRAM = ['m', 'M']
     DELETE_RECORDING = 'd'
     QUIT = 'q'
-    TOGGLE_FULLSCREEN = 'F11'
+    TOGGLE_FULLSCREEN = 'F10'
+    SHOW_HELP = 'h'
+    SHOW_INFO = 'i'
 
 

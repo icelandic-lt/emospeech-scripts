@@ -154,6 +154,7 @@ class UIState:
         font_size_large: Large font size for main text
         font_size_medium: Medium font size for labels
         font_size_small: Small font size for status
+        saved_window_geometry: Saved window geometry before fullscreen
     """
     # Window state
     window_width: int = 0
@@ -168,6 +169,9 @@ class UIState:
     font_size_large: int = 60
     font_size_medium: int = 42
     font_size_small: int = 30
+
+    # Saved window position (geometry string)
+    saved_window_geometry: Optional[str] = None
 
     def calculate_font_sizes(self, base_size: int, scale_factor: float) -> None:
         """Calculate font sizes based on window dimensions.

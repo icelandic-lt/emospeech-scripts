@@ -167,17 +167,20 @@ class MelSpectrogramProcessor(AudioProcessor):
         self.fmax = fmax
 
         # Pre-compute mel filterbank for efficiency
+        # Clamp fmax to Nyquist frequency if needed
+        actual_fmax = min(fmax, sample_rate / 2)
         self.mel_filter = librosa.filters.mel(
             sr=sample_rate,
             n_fft=n_fft,
             n_mels=n_mels,
             fmin=fmin,
-            fmax=fmax
+            fmax=actual_fmax
         )
+        self.actual_fmax = actual_fmax
 
     def process(self, audio_data: np.ndarray,
-                normalization_factor: Optional[float] = None) -> np.ndarray:
-        """Convert audio frame to mel-scale dB values.
+                normalization_factor: Optional[float] = None) -> Tuple[np.ndarray, Optional[float]]:
+        """Convert audio frame to mel-scale dB values and detect highest frequency.
 
         Processes a single frame of audio data to produce mel-scale
         magnitude values in decibels.
@@ -188,7 +191,9 @@ class MelSpectrogramProcessor(AudioProcessor):
                 If None and data is not normalized, uses default 16-bit factor.
 
         Returns:
-            np.ndarray: Mel-scale magnitudes in dB (n_mels values)
+            Tuple of:
+                - np.ndarray: Mel-scale magnitudes in dB (n_mels values)
+                - float: Highest frequency with significant energy (Hz) or None
 
         Note:
             Automatically detects if input is already normalized (max <= 1.0)
@@ -222,7 +227,23 @@ class MelSpectrogramProcessor(AudioProcessor):
         # Clamp to reasonable range
         mel_db = np.clip(mel_db, AudioConstants.DB_MIN, 0)
 
-        return mel_db
+        # Detect highest frequency with significant energy
+        # Use the raw FFT power spectrum for frequency detection
+        power_db = 10 * np.log10(power[:self.n_fft // 2 + 1] + AudioConstants.DB_REFERENCE)
+
+        # Find highest frequency above noise floor (-60 dB)
+        noise_floor = -60
+        significant_bins = np.where(power_db > noise_floor)[0]
+
+        if len(significant_bins) > 0:
+            highest_bin = significant_bins[-1]
+            # Convert bin to frequency
+            freq_per_bin = self.sample_rate / self.n_fft
+            highest_freq = highest_bin * freq_per_bin
+        else:
+            highest_freq = None
+
+        return mel_db, highest_freq
 
     def process_file(self, audio_data: np.ndarray,
                      normalization_factor: Optional[float] = None) -> Tuple[np.ndarray, int]:
@@ -244,11 +265,14 @@ class MelSpectrogramProcessor(AudioProcessor):
             Returns transposed array for display (frequency bins as rows)
         """
         frames = []
+        max_freq = 0.0
 
         for i in range(0, len(audio_data) - self.n_fft + 1, self.hop_length):
             frame = audio_data[i:i + self.n_fft]
-            mel_db = self.process(frame, normalization_factor)
+            mel_db, highest_freq = self.process(frame, normalization_factor)
             frames.append(mel_db)
+            if highest_freq and highest_freq > max_freq:
+                max_freq = highest_freq
 
         result = np.array(frames).T
-        return result, len(frames)  # Return transposed for display
+        return result, len(frames), max_freq  # Return transposed for display
