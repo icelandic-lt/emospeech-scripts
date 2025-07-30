@@ -10,6 +10,7 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from typing import Optional
+import traceback
 
 import sounddevice as sd
 
@@ -507,7 +508,9 @@ class EmoSpeechRecorder:
                 audio_data, sr = self.file_manager.load_audio(filepath)
                 self.window.mel_spectrogram.show_recording(audio_data, sr)
             except Exception as e:
+
                 print(f"Error loading recording: {e}")
+                traceback.print_exc()
         else:
             # File doesn't exist - clear the spectrogram
             self.window.mel_spectrogram.clear()
@@ -804,8 +807,6 @@ def parse_arguments() -> argparse.Namespace:
         default=0,
         help='starting index (not id) of UI'
     )
-
-    # Display configuration group removed - settings are now persistent
 
     # UI configuration
     ui = parser.add_argument_group('UI configuration')

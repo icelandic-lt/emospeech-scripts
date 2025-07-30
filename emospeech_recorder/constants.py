@@ -121,7 +121,7 @@ class FileConstants:
     DEFAULT_SCRIPT_FILE = 'utts.data'
     DEFAULT_RECORDING_DIR = 'recordings'
     AUDIO_FILE_EXTENSION = '.flac'
-    LEGACY_AUDIO_FILE_EXTENSION = '.wav'  # Support for existing WAV files
+    LEGACY_AUDIO_FILE_EXTENSION = '.wav'
     NOT_FOUND_AUDIO = 'not_found.wav'
 
     # File formats

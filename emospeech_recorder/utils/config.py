@@ -101,7 +101,7 @@ class DisplayConfig:
             to AudioConfig in future refactoring.
         """
         # This should use the sample rate from audio config
-        # Will be properly linked when configs are combined
+        # Will be linked when configs are combined
         return AudioConstants.DEFAULT_SAMPLE_RATE / AudioConstants.HOP_LENGTH
 
 

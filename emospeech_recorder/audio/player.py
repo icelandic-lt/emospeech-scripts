@@ -7,6 +7,7 @@ import time
 import sounddevice as sd
 import numpy as np
 from pathlib import Path
+import traceback
 
 from ..utils.config import AudioConfig
 from ..utils.file_manager import RecordingFileManager
@@ -163,7 +164,6 @@ def playback_process(config: AudioConfig,
 
     except Exception as e:
         print(f"Playback process error: {e}")
-        import traceback
         traceback.print_exc()
 
     finally:

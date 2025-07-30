@@ -7,6 +7,7 @@ import sounddevice as sd
 import numpy as np
 import soundfile as sf
 from pathlib import Path
+import traceback
 
 from ..constants import AudioConstants, FileConstants
 from ..utils.config import AudioConfig
@@ -168,7 +169,24 @@ class AudioRecorder:
             Uses soundfile to write with appropriate subtype
             (PCM_16 or PCM_24) based on configuration.
         """
-        if self.config.subtype:
+        if filepath.suffix.lower() == '.flac':
+            # For FLAC, explicitly set subtype based on bit depth
+            if self.config.bit_depth == 24:
+                sf.write(
+                    str(filepath),
+                    audio_data,
+                    self.config.sample_rate,
+                    subtype='PCM_24'
+                )
+            else:
+                sf.write(
+                    str(filepath),
+                    audio_data,
+                    self.config.sample_rate,
+                    subtype='PCM_16'
+                )
+        elif self.config.subtype:
+            # For WAV files, use configured subtype
             sf.write(
                 str(filepath),
                 audio_data,
@@ -176,7 +194,7 @@ class AudioRecorder:
                 subtype=self.config.subtype
             )
         else:
-            # For FLAC, let soundfile determine format from extension
+            # Default behavior
             sf.write(
                 str(filepath),
                 audio_data,
@@ -242,7 +260,6 @@ def record_process(config: AudioConfig,
     except Exception as e:
         if shared_state.get('debug', False):
             print(f"Recording process error: {e}")
-            import traceback
             traceback.print_exc()
 
     finally:

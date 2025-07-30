@@ -92,6 +92,9 @@ class MainWindow:
         # Bind resize events
         self.root.bind('<Configure>', self._on_window_resize)
 
+        # Force initial resize event after window is mapped
+        self.root.after(50, self._trigger_initial_resize)
+
     def _setup_screen_geometry(self) -> None:
         """Get screen dimensions and calculate window size.
 
@@ -437,6 +440,9 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
         # Apply fonts
         self._apply_fonts()
 
+        # Force update of all widgets
+        self.root.update_idletasks()
+
     def _create_info_bar(self) -> None:
         """Create the top information bar.
 
@@ -765,6 +771,15 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
         event.width = self.ui_state.window_width
         event.height = self.ui_state.window_height
         self._on_window_resize(event)
+
+    def _trigger_initial_resize(self) -> None:
+        """Trigger initial resize after window is fully mapped."""
+        # Update window dimensions from actual window
+        self.root.update_idletasks()
+        self.ui_state.window_width = self.root.winfo_width()
+        self.ui_state.window_height = self.root.winfo_height()
+        # Trigger resize event
+        self._trigger_resize_event()
 
     def toggle_spectrogram(self, update_external_state: Optional[Callable] = None) -> None:
         """Toggle mel spectrogram visibility.
