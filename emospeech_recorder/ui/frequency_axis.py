@@ -23,6 +23,9 @@ class FrequencyAxisManager:
             ax: Matplotlib axes to manage
         """
         self.ax = ax
+        self._peak_indicator_position = None  # Track current peak indicator position
+        self._base_ticks = []  # Store base frequency ticks
+        self._base_labels = []  # Store base frequency labels
 
     def update_default_axis(self, n_mels: int, fmin: float, fmax: float) -> None:
         """Update frequency axis with default settings.
@@ -32,6 +35,9 @@ class FrequencyAxisManager:
             fmin: Minimum frequency in Hz
             fmax: Maximum frequency in Hz
         """
+        # Reset peak indicator when updating axis
+        self._peak_indicator_position = None
+
         mel_freqs = self._get_mel_frequencies(n_mels, fmin, fmax)
         ticks, labels = self._calculate_ticks_and_labels(mel_freqs, fmax)
         self._apply_ticks_and_labels(ticks, labels)
@@ -47,6 +53,9 @@ class FrequencyAxisManager:
         Returns:
             Tuple of (adaptive_n_mels, adaptive_fmax)
         """
+        # Reset peak indicator when updating axis
+        self._peak_indicator_position = None
+
         # Calculate adaptive parameters
         nyquist_freq = sample_rate / 2
         adaptive_fmax = nyquist_freq
@@ -75,22 +84,27 @@ class FrequencyAxisManager:
             fmin: Minimum frequency in Hz
             fmax: Maximum frequency in Hz
         """
-        if max_freq <= 0:
+        if max_freq <= 0 or not self._base_ticks:
             return
-
-        # Get current axis state
-        current_ticks = list(self.ax.get_yticks())
-        current_labels = [label.get_text() for label in self.ax.get_yticklabels()]
 
         # Find mel bin for max frequency
         mel_freqs = self._get_mel_frequencies(n_mels, fmin, fmax)
         max_freq_bin = np.argmin(np.abs(mel_freqs - max_freq))
 
+        # Only update if peak position has changed significantly
+        if (self._peak_indicator_position is not None and
+            abs(max_freq_bin - self._peak_indicator_position) < 0.5):
+            return  # Peak hasn't moved enough to warrant update
+
+        # Start with base ticks and labels
+        all_ticks = self._base_ticks.copy()
+        all_labels = self._base_labels.copy()
+
         # Check if we need to replace a nearby tick
         min_distance = n_mels / 20  # 5% separation
         replace_idx = None
 
-        for i, tick in enumerate(current_ticks):
+        for i, tick in enumerate(all_ticks):
             if abs(tick - max_freq_bin) < min_distance:
                 replace_idx = i
                 break
@@ -98,31 +112,39 @@ class FrequencyAxisManager:
         if 0 <= max_freq_bin < n_mels:
             if replace_idx is not None:
                 # Replace nearby tick
-                all_ticks = current_ticks.copy()
                 all_ticks[replace_idx] = max_freq_bin
-                all_labels = current_labels.copy()
                 all_labels[replace_idx] = self._format_frequency(max_freq)
             else:
-                # Add new tick
-                all_ticks = sorted(current_ticks + [max_freq_bin])
-                all_labels = []
-                for tick in all_ticks:
-                    if tick == max_freq_bin:
-                        all_labels.append(self._format_frequency(max_freq))
-                    else:
-                        orig_idx = current_ticks.index(tick)
-                        all_labels.append(current_labels[orig_idx])
+                # Add new tick at correct position
+                insert_idx = 0
+                for i, tick in enumerate(all_ticks):
+                    if tick > max_freq_bin:
+                        insert_idx = i
+                        break
+                else:
+                    insert_idx = len(all_ticks)
+
+                all_ticks.insert(insert_idx, max_freq_bin)
+                all_labels.insert(insert_idx, self._format_frequency(max_freq))
 
             # Apply updates
             self.ax.set_yticks(all_ticks)
             self.ax.set_yticklabels(all_labels)
 
-            # Color the max frequency label orange
-            for i, (tick, label) in enumerate(zip(all_ticks, self.ax.get_yticklabels())):
-                if (replace_idx is not None and i == replace_idx) or \
-                   (replace_idx is None and tick == max_freq_bin):
-                    label.set_color('orange')
-                    label.set_weight('bold')
+            # Store the new peak indicator position
+            self._peak_indicator_position = max_freq_bin
+
+            # Reset all labels to default style first
+            for label in self.ax.get_yticklabels():
+                label.set_color(UIConstants.COLOR_TEXT_INACTIVE)
+                label.set_weight('normal')
+
+            # Then highlight only the peak indicator
+            for i, tick in enumerate(all_ticks):
+                if tick == max_freq_bin:
+                    self.ax.get_yticklabels()[i].set_color('orange')
+                    self.ax.get_yticklabels()[i].set_weight('bold')
+                    break
 
     def _get_mel_frequencies(self, n_mels: int, fmin: float, fmax: float) -> np.ndarray:
         """Get mel frequency values for each bin."""
@@ -172,6 +194,10 @@ class FrequencyAxisManager:
 
     def _apply_ticks_and_labels(self, ticks: np.ndarray, labels: List[str]) -> None:
         """Apply ticks and labels to axis."""
+        # Store base ticks and labels for later use
+        self._base_ticks = list(ticks)
+        self._base_labels = list(labels)
+
         self.ax.set_yticks(ticks)
         self.ax.set_yticklabels(labels)
 

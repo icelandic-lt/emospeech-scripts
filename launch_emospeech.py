@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Launcher script for EmoSpeech Recorder with proper app name on macOS."""
+"""Launcher script for EmoSpeech Recorder."""
 
 import os
 import sys
 import platform
 
 def main():
-    """Launch EmoSpeech Recorder with proper application name."""
+    """Launch EmoSpeech Recorder."""
     # Set the application name for macOS menu bar
     if platform.system() == 'Darwin':
         # This environment variable can help with some Python interpreters

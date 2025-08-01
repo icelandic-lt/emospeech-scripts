@@ -29,7 +29,7 @@ class AudioConstants:
 
     # Display ranges
     DB_MIN = -70  # Background noise level
-    DB_MAX = -10  # Compressed range for better detail
+    DB_MAX = 0    # Maximum possible dB value
     DB_REFERENCE = 1e-10  # Reference for dB calculation
 
     # Processing
@@ -40,7 +40,7 @@ class AudioConstants:
 
     # Normalization factors
     NORM_FACTOR_16BIT = 32768.0  # 2^15
-    NORM_FACTOR_24BIT = 2147483648.0  # 2^31 (int32 for 24-bit)
+    NORM_FACTOR_32BIT = 2147483647.0  # 2^31 - 1 (max value for int32)
 
 
 class UIConstants:

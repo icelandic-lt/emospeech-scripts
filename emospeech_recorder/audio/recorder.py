@@ -114,7 +114,8 @@ class AudioRecorder:
 
         # Concatenate all audio chunks
         if self.audio_data:
-            return np.concatenate(self.audio_data)
+            result = np.concatenate(self.audio_data)
+            return result
         return np.array([])
 
     def _audio_callback(self, indata: np.ndarray, frames: int,
@@ -137,20 +138,11 @@ class AudioRecorder:
             # Store audio data
             self.audio_data.append(indata.copy())
 
-            # Debug: Print first callback
-            if len(self.audio_data) == 1 and self.shared_state.get('debug', False):
-                print(f"First audio callback: shape={indata.shape}, dtype={indata.dtype}, max={np.max(np.abs(indata))}")
-
             # Send to processing queue if active
             queue_active = self.shared_state.get('audio_queue_active', False)
-            if len(self.audio_data) == 1 and self.shared_state.get('debug', False):
-                print(f"Audio queue active: {queue_active}")
-
             if queue_active:
                 try:
                     self.audio_queue.put_nowait(indata.copy())
-                    if len(self.audio_data) <= 3 and self.shared_state.get('debug', False):  # Print first few
-                        print(f"Put audio chunk {len(self.audio_data)} in queue")
                 except queue.Full:
                     if self.shared_state.get('debug', False):
                         print("Warning: Audio queue full!")
@@ -235,8 +227,6 @@ def record_process(config: AudioConfig,
 
                 if command == 'start':
                     recorder.start_recording()
-                    if shared_state.get('debug', False):
-                        print("Recording started")
 
                 elif command == 'stop':
                     audio_data = recorder.stop_recording()
@@ -256,7 +246,12 @@ def record_process(config: AudioConfig,
 
             except queue.Empty:
                 continue
+            except KeyboardInterrupt:
+                break
 
+    except KeyboardInterrupt:
+        if shared_state.get('debug', False):
+            print("\nRecording process interrupted by user")
     except Exception as e:
         if shared_state.get('debug', False):
             print(f"Recording process error: {e}")

@@ -2,10 +2,11 @@
 
 import queue
 import numpy as np
-from typing import Optional, List
+from typing import List
 
 from ...constants import AudioConstants, UIConstants
 from ...audio.processor import MelSpectrogramProcessor, ClippingDetector
+from ...utils.audio_utils import ensure_mono_normalized
 from .controllers import ClippingVisualizer
 
 
@@ -48,9 +49,6 @@ class RecordingHandler:
         self.audio_buffer = np.zeros(self.buffer_size)
         self.buffer_position = 0
 
-        # Spectrogram display buffer
-        self.spec_buffer = np.ones((n_mels, self._spec_frames)) * AudioConstants.DB_MIN
-
         # Thread-safe queue for audio data
         self.audio_queue = queue.Queue(maxsize=100)
 
@@ -77,15 +75,9 @@ class RecordingHandler:
 
     @spec_frames.setter
     def spec_frames(self, value: int) -> None:
-        """Set spec_frames and resize buffer."""
+        """Set spec_frames."""
         if value != self._spec_frames:
             self._spec_frames = value
-            # Resize spec buffer preserving data
-            old_buffer = self.spec_buffer
-            self.spec_buffer = np.ones((self.n_mels, value)) * AudioConstants.DB_MIN
-            # Copy existing data
-            copy_frames = min(old_buffer.shape[1], value)
-            self.spec_buffer[:, -copy_frames:] = old_buffer[:, -copy_frames:]
 
     def start_recording(self) -> None:
         """Start recording mode."""
@@ -95,6 +87,18 @@ class RecordingHandler:
         self.clipping_visualizer.clear()
         self.max_detected_freq = 0.0
         self.all_spec_frames = []
+
+        # Clear audio buffer
+        self.audio_buffer.fill(0)
+        self.buffer_position = 0
+
+        # Clear the audio queue
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
+
 
     def stop_recording(self) -> None:
         """Stop recording mode."""
@@ -112,27 +116,32 @@ class RecordingHandler:
         if not self.is_recording:
             return False
 
+        audio_chunk = ensure_mono_normalized(audio_chunk)
         chunk_size = len(audio_chunk)
 
-        # Update audio buffer (rolling buffer)
+        # Add new audio to buffer
         if self.buffer_position + chunk_size <= self.buffer_size:
             self.audio_buffer[self.buffer_position:self.buffer_position + chunk_size] = audio_chunk
         else:
-            overflow = (self.buffer_position + chunk_size) - self.buffer_size
-            self.audio_buffer[self.buffer_position:] = audio_chunk[:-overflow]
-            self.audio_buffer[:overflow] = audio_chunk[-overflow:]
+            # Shift buffer left by the overflow amount
+            self.audio_buffer[:-chunk_size] = self.audio_buffer[chunk_size:]
+            # Add new chunk at the end
+            self.audio_buffer[-chunk_size:] = audio_chunk
+            # Adjust buffer position
+            self.buffer_position = self.buffer_size - chunk_size
 
         # Process complete frames
         frames_processed = False
-        while self.buffer_position + AudioConstants.N_FFT <= self.buffer_size:
+        frame_start = 0
+        # Process all complete frames in the buffer
+        while frame_start + AudioConstants.N_FFT <= self.buffer_position + chunk_size:
             # Extract frame for processing
-            frame_start = self.buffer_position
             frame_end = frame_start + AudioConstants.N_FFT
             frame = self.audio_buffer[frame_start:frame_end]
 
             # Detect clipping
-            clipping_pos = self.clipping_detector.check_frame(frame, self.frame_count)
-            if clipping_pos is not None:
+            if self.clipping_detector.process(frame):
+                clipping_pos = self.frame_count
                 current_markers = self.clipping_visualizer.clipping_markers
                 if (not current_markers or
                     clipping_pos - current_markers[-1] > AudioConstants.MIN_CLIPPING_MARKER_DISTANCE):
@@ -149,20 +158,24 @@ class RecordingHandler:
                 max_freq = self.mel_processor.mel_frequencies[max_bin]
                 self.max_detected_freq = max(self.max_detected_freq, max_freq)
 
-            # Update spectrogram buffer
-            self.spec_buffer = np.roll(self.spec_buffer, -1, axis=1)
-            self.spec_buffer[:, -1] = mel_db
-            self.frame_count += 1
-
             # Store frame for zoom/scroll
             self.all_spec_frames.append(mel_db.copy())
+            self.frame_count += 1
 
-            # Move position by hop_length
-            self.buffer_position += AudioConstants.HOP_LENGTH
+            # Move to next frame position
+            frame_start += AudioConstants.HOP_LENGTH
             frames_processed = True
 
-        # Adjust buffer position when rolling
-        self.buffer_position -= chunk_size
+        # Update buffer position to point after the new chunk
+        self.buffer_position += chunk_size
+
+        # Remove processed data from buffer if needed
+        if frame_start > 0:
+            # Shift unprocessed data to the beginning
+            remaining = self.buffer_position - frame_start
+            if remaining > 0:
+                self.audio_buffer[:remaining] = self.audio_buffer[frame_start:self.buffer_position]
+            self.buffer_position = remaining
 
         # Update current time
         self.current_time = (self.frame_count * AudioConstants.HOP_LENGTH) / self.sample_rate
@@ -173,16 +186,10 @@ class RecordingHandler:
         ui_update_interval = max(1, int(self.frames_per_second / target_ui_fps))
 
         should_update = frames_processed and (self.update_counter % ui_update_interval == 0)
-
         return should_update
-
-    def get_current_spec_buffer(self) -> np.ndarray:
-        """Get current spectrogram buffer for display."""
-        return self.spec_buffer
 
     def clear(self) -> None:
         """Clear all recording data."""
-        self.spec_buffer.fill(AudioConstants.DB_MIN)
         self.audio_buffer.fill(0)
         self.clipping_visualizer.clear()
         self.max_detected_freq = 0.0

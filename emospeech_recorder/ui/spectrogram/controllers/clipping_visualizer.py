@@ -104,25 +104,22 @@ class ClippingVisualizer:
         """
         self.clear_markers()
 
-        # Calculate visible window considering zoom
-        visible_seconds = UIConstants.SPECTROGRAM_DISPLAY_SECONDS / zoom_level
-        visible_frames = int(visible_seconds * frames_per_second)
+        # For live recording, the spectrogram scrolls from right to left
+        # New data appears on the right, old data scrolls off the left
+        # We need to position markers based on how many frames ago they occurred
 
         for clip_pos in self.clipping_markers:
-            if current_time <= visible_seconds:
-                # Early in recording, show from start
-                if clip_pos < visible_frames:
-                    display_pos = int((clip_pos / visible_frames) * spec_frames)
-                    if display_pos < spec_frames:
-                        self.add_marker_line(display_pos)
-            else:
-                # Scrolling mode
-                start_frame = frame_count - visible_frames
-                if start_frame <= clip_pos < frame_count:
-                    relative_pos = (clip_pos - start_frame) / visible_frames
-                    display_pos = int(relative_pos * spec_frames)
-                    if 0 <= display_pos < spec_frames:
-                        self.add_marker_line(display_pos)
+            # Calculate how many frames ago this clipping occurred
+            frames_ago = frame_count - clip_pos
+
+            if frames_ago >= 0 and frames_ago < spec_frames:
+                # The marker should appear at position from the right
+                # spec_frames - 1 is the rightmost (newest) position
+                # 0 is the leftmost (oldest) position
+                display_pos = spec_frames - 1 - frames_ago
+
+                if 0 <= display_pos < spec_frames:
+                    self.add_marker_line(display_pos)
 
     def show_warning(self) -> None:
         """Show or update clipping warning text."""

@@ -6,7 +6,6 @@ from scipy import interpolate
 
 from ...constants import AudioConstants
 from ...audio.processor import MelSpectrogramProcessor, ClippingDetector
-from ...audio.mel_factory import MelProcessorFactory
 from .controllers import ClippingVisualizer, ZoomController
 
 
@@ -63,10 +62,13 @@ class RecordingDisplay:
         self.clipping_visualizer.set_clipping_positions(clipping_positions)
 
         # Create adaptive mel processor for this sample rate
-        recording_mel_processor, adaptive_n_mels = self._create_recording_mel_processor(sample_rate)
+        recording_mel_processor, adaptive_n_mels = self.create_recording_mel_processor(sample_rate)
 
         # Process entire recording
         n_frames = 1 + (len(audio_data) - AudioConstants.N_FFT) // AudioConstants.HOP_LENGTH
+
+        mel_min = float('inf')
+        mel_max = float('-inf')
 
         # Compute mel spectrogram for entire recording
         mel_spec = np.zeros((adaptive_n_mels, n_frames))
@@ -80,6 +82,10 @@ class RecordingDisplay:
                 frame = audio_data[start_idx:end_idx]
                 mel_db, _ = recording_mel_processor.process(frame)
                 mel_spec[:, i] = mel_db
+
+                # Update min/max tracking
+                mel_min = min(mel_min, np.min(mel_db))
+                mel_max = max(mel_max, np.max(mel_db))
 
                 # Track maximum frequency
                 freq_bins_with_energy = np.where(mel_db > AudioConstants.DB_MIN + 20)[0]
@@ -103,11 +109,10 @@ class RecordingDisplay:
         self.zoom_controller.reset()
 
         # Resample if needed for display
-        display_data = self._resample_spectrogram_for_display(mel_spec, n_frames, adaptive_n_mels)
-
+        display_data = self.resample_spectrogram_for_display(mel_spec, n_frames, adaptive_n_mels)
         return display_data, adaptive_n_mels, duration
 
-    def _create_recording_mel_processor(self, sample_rate: int) -> Tuple[MelSpectrogramProcessor, int]:
+    def create_recording_mel_processor(self, sample_rate: int) -> Tuple[MelSpectrogramProcessor, int]:
         """Create mel processor optimized for recording's sample rate."""
         nyquist_freq = sample_rate / 2
         adaptive_fmax = nyquist_freq
@@ -124,10 +129,9 @@ class RecordingDisplay:
             fmin=self.display_config.fmin,
             fmax=adaptive_fmax
         )
-
         return recording_mel_processor, adaptive_n_mels
 
-    def _resample_spectrogram_for_display(self, mel_spec: np.ndarray,
+    def resample_spectrogram_for_display(self, mel_spec: np.ndarray,
                                          n_frames: int, n_mels: int) -> np.ndarray:
         """Resample spectrogram to fit display width if needed."""
         if n_frames != self.spec_frames:

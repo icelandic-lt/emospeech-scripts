@@ -3,18 +3,15 @@
 from typing import Optional, Tuple, List
 import numpy as np
 import tkinter as tk
-from tkinter import ttk
 import matplotlib
 matplotlib.use('TkAgg')
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.axes import Axes
 from matplotlib.image import AxesImage
-from matplotlib.text import Text
 from scipy import interpolate
 
 from ...constants import AudioConstants, UIConstants
-from ...audio.processor import MelSpectrogramProcessor
 from ...ui.frequency_axis import FrequencyAxisManager
 from ...utils.config import AudioConfig, DisplayConfig
 

@@ -83,6 +83,10 @@ class ThreadedAudioRecorder:
 
         # Concatenate all audio chunks
         if self.audio_data:
+            total_chunks = len(self.audio_data)
+            total_samples = sum(len(chunk) for chunk in self.audio_data)
+            duration = total_samples / self.config.sample_rate
+            print(f"[DEBUG ThreadedRecorder] Stop: Total chunks: {total_chunks}, total samples: {total_samples}, duration: {duration:.2f}s")
             return np.concatenate(self.audio_data)
         return np.array([])
 
@@ -96,6 +100,10 @@ class ThreadedAudioRecorder:
             # Store audio data
             self.audio_data.append(indata.copy())
 
+            # Debug: Track chunks
+            if len(self.audio_data) <= 5:
+                print(f"[DEBUG Recorder] Stored chunk {len(self.audio_data)}: shape={indata.shape}")
+
             # Call external callback if provided
             if self.audio_callback:
                 try:
@@ -108,6 +116,10 @@ class ThreadedAudioRecorder:
         if len(audio_data) == 0:
             print("Warning: No audio data to save")
             return
+
+        print(f"Saving audio: shape={audio_data.shape}, dtype={audio_data.dtype}")
+        print(f"Raw min/max: {np.min(audio_data)} / {np.max(audio_data)}")
+        print(f"Samples: {len(audio_data)}, frames: {(len(audio_data) - AudioConstants.N_FFT) // AudioConstants.HOP_LENGTH + 1}")
 
         sf.write(
             str(filepath),

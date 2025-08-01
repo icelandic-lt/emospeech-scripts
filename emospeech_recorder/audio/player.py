@@ -62,8 +62,24 @@ class AudioPlayer:
         self.is_playing = True
 
         try:
+            # Get output device info
+            try:
+                device_info = sd.query_devices(self.config.output_device, 'output')
+                if device_info['max_output_channels'] == 0:
+                    print(f"Error: Device {self.config.output_device} ({device_info['name']}) has no output channels")
+                    return
+            except Exception as e:
+                print(f"Error querying output device: {e}")
+                return
+
+            # Ensure audio is the right shape for the output device
+            # If mono audio and output device expects stereo, duplicate the channel
+            if audio_data.ndim == 1 and device_info['max_output_channels'] >= 2:
+                # Convert mono to stereo by duplicating the channel
+                audio_data = np.column_stack((audio_data, audio_data))
+
             # Start playback
-            sd.play(audio_data, sample_rate)
+            sd.play(audio_data, sample_rate, device=self.config.output_device)
 
             # Wait for playback to finish, checking for stop signal
             while sd.get_stream() and sd.get_stream().active:
@@ -113,8 +129,6 @@ def playback_process(config: AudioConfig,
     player = AudioPlayer(config)
     file_manager = RecordingFileManager(recording_dir)
 
-    print(f"Playback process started in dir: {recording_dir}")
-
     try:
         while True:
             try:
@@ -161,7 +175,13 @@ def playback_process(config: AudioConfig,
 
             except queue.Empty:
                 continue
+            except KeyboardInterrupt:
+                # Handle Ctrl-C gracefully
+                break
 
+    except KeyboardInterrupt:
+        if shared_state.get('debug', False):
+            print("\nPlayback process interrupted by user")
     except Exception as e:
         print(f"Playback process error: {e}")
         traceback.print_exc()

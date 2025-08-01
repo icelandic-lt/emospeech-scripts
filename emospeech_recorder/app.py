@@ -9,6 +9,7 @@ import queue
 import threading
 import tkinter as tk
 from pathlib import Path
+import signal
 from typing import Optional
 import traceback
 
@@ -142,6 +143,7 @@ class EmoSpeechRecorder:
         self.shared_state['playing'] = False
         self.shared_state['audio_queue_active'] = self.config.display.show_spectrogram
         self.shared_state['save_path'] = None
+        self.shared_state['debug'] = self.debug
 
     def _init_ui(self) -> None:
         """Initialize the user interface."""
@@ -207,7 +209,6 @@ class EmoSpeechRecorder:
         # Start audio queue processing (widget is always created now)
         if hasattr(self.window, 'mel_spectrogram') and self.window.mel_spectrogram is not None:
             self._start_audio_queue_processing()
-            print("Mel spectrogram widget initialized and audio queue started")
         else:
             print("Warning: Mel spectrogram widget not found")
             print(f"Has mel_spectrogram attr: {hasattr(self.window, 'mel_spectrogram')}")
@@ -242,7 +243,6 @@ class EmoSpeechRecorder:
             args=(self.config.audio, self.audio_queue, self.shared_state, self.record_queue)
         )
         self.record_process.start()
-        print(f"Recording process started: PID={self.record_process.pid}")
 
         # Playback process
         self.playback_process = mp.Process(
@@ -251,13 +251,12 @@ class EmoSpeechRecorder:
                   self.shared_state, self.stop_signal)
         )
         self.playback_process.start()
-        print(f"Playback process started: PID={self.playback_process.pid}")
 
     def _start_audio_queue_processing(self) -> None:
         """Start processing audio queue for real-time display."""
         self.shared_state['audio_queue_active'] = True
 
-        # Start a transfer thread like in rec_improved.py
+        # Start a transfer thread
         def audio_transfer_thread():
             while self.shared_state.get('audio_queue_active', False):
                 try:
@@ -312,7 +311,6 @@ class EmoSpeechRecorder:
         if hasattr(self.window, 'mel_spectrogram'):
             self.window.mel_spectrogram.clear()
             self.window.mel_spectrogram.start_recording()
-            print(f"Spectrogram recording started, is_recording={self.window.mel_spectrogram.is_recording}")
 
         # Update info overlay if visible to show recording parameters
         if self.window.info_overlay.visible:
@@ -325,12 +323,6 @@ class EmoSpeechRecorder:
 
         # Start recording
         self.record_queue.put('start')
-
-        # Debug: check if audio transfer thread is running
-        if hasattr(self, 'transfer_thread'):
-            print(f"Audio transfer thread alive: {self.transfer_thread.is_alive()}")
-
-        # Update display
         self._update_display()
 
     def _stop_recording(self) -> None:
@@ -924,6 +916,13 @@ def main() -> None:
     # Multiprocessing setup for macOS
     if platform.system() == 'Darwin':
         mp.set_start_method('spawn', force=True)
+
+    # Set up signal handler for clean shutdown
+    def signal_handler(signum, frame):
+        print("\nReceived interrupt signal, shutting down...")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
 
     # Parse arguments
     args = parse_arguments()

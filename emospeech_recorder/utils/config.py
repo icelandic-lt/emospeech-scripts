@@ -37,22 +37,6 @@ class AudioConfig:
     input_device: Optional[int] = None
     output_device: Optional[int] = None
 
-    @property
-    def normalization_factor(self) -> float:
-        """Get the normalization factor based on bit depth.
-
-        Returns:
-            float: Factor to normalize raw audio to [-1, 1] range
-
-        Raises:
-            ValueError: If bit depth is not supported
-        """
-        if self.bit_depth == 16:
-            return AudioConstants.NORM_FACTOR_16BIT
-        elif self.bit_depth == 24:
-            return AudioConstants.NORM_FACTOR_24BIT
-        else:
-            raise ValueError(f"Unsupported bit depth: {self.bit_depth}")
 
     def __post_init__(self):
         """Set dtype and subtype based on bit depth.

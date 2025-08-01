@@ -6,6 +6,7 @@ import numpy as np
 import librosa
 
 from ..constants import AudioConstants
+from ..utils.audio_utils import normalize_audio
 
 
 class AudioProcessor(ABC):
@@ -49,23 +50,19 @@ class ClippingDetector(AudioProcessor):
 
     Attributes:
         threshold: Normalized threshold for clipping detection (0.0 to 1.0)
-        normalization_factor: Factor for normalizing raw audio data
     """
 
     def __init__(self,
                  sample_rate: int = AudioConstants.DEFAULT_SAMPLE_RATE,
-                 threshold: float = AudioConstants.CLIPPING_THRESHOLD,
-                 normalization_factor: float = AudioConstants.NORM_FACTOR_16BIT):
+                 threshold: float = AudioConstants.CLIPPING_THRESHOLD):
         """Initialize the clipping detector.
 
         Args:
             sample_rate: Audio sample rate in Hz
             threshold: Clipping threshold (0.95 = 95% of max level)
-            normalization_factor: Factor to normalize raw audio (32768 for 16-bit)
         """
         super().__init__(sample_rate)
         self.threshold = threshold
-        self.normalization_factor = normalization_factor
 
     def process(self, audio_data: np.ndarray) -> bool:
         """Check if audio data contains clipping.
@@ -79,14 +76,10 @@ class ClippingDetector(AudioProcessor):
         Note:
             Handles both normalized (-1 to 1) and raw audio data
         """
-        max_val = np.max(np.abs(audio_data))
-
-        # Check if data is already normalized
-        if np.max(np.abs(audio_data)) <= 1.0:
-            return max_val >= self.threshold
-        else:
-            normalized_max = max_val / self.normalization_factor
-            return normalized_max >= self.threshold
+        # Use centralized normalization
+        audio_norm = normalize_audio(audio_data)
+        max_val = np.max(np.abs(audio_norm))
+        return max_val >= self.threshold
 
     def find_clipping_positions(self, audio_data: np.ndarray,
                                hop_length: int = AudioConstants.HOP_LENGTH,
@@ -206,17 +199,8 @@ class MelSpectrogramProcessor(AudioProcessor):
             Automatically detects if input is already normalized (max <= 1.0)
             to handle both live recording and loaded audio files correctly.
         """
-        # Normalize if needed
-        max_val = np.max(np.abs(audio_data))
-        if max_val <= 1.0:
-            # Data is already normalized (from soundfile)
-            audio_norm = audio_data
-        elif normalization_factor:
-            # Raw data, use provided normalization factor
-            audio_norm = audio_data / normalization_factor
-        else:
-            # Raw data, use default normalization
-            audio_norm = audio_data / AudioConstants.NORM_FACTOR_16BIT
+        # Use centralized normalization function
+        audio_norm = normalize_audio(audio_data)
 
         # Apply window
         windowed = audio_norm * np.hanning(len(audio_norm))
@@ -231,7 +215,7 @@ class MelSpectrogramProcessor(AudioProcessor):
         # Convert to dB
         mel_db = 10 * np.log10(mel_power + AudioConstants.DB_REFERENCE)
 
-        # Clamp to reasonable range
+        # Clamp to reasonable range - clip to 0 dB max (not DB_MAX which is for display)
         mel_db = np.clip(mel_db, AudioConstants.DB_MIN, 0)
 
         # Detect highest frequency with significant energy
