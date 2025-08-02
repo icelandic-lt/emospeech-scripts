@@ -43,9 +43,10 @@ class MainWindow:
                  config: RecorderConfig,
                  recording_state: RecordingState,
                  ui_state: UIState,
-                 shared_state: dict = None,
+                 manager_dict: dict = None,
                  app_callbacks: dict = None,
-                 settings_manager: Optional[SettingsManager] = None):
+                 settings_manager: Optional[SettingsManager] = None,
+                 shared_audio_state = None):
         """Initialize the main window.
 
         Args:
@@ -53,17 +54,19 @@ class MainWindow:
             config: Application configuration with display and UI settings
             recording_state: Recording state manager tracking current utterance
             ui_state: UI state manager for window properties
-            shared_state: Shared state dictionary
+            manager_dict: Shared state dictionary
             app_callbacks: Application callbacks
             settings_manager: Settings manager for persisting preferences
+            shared_audio_state: Shared audio state for synchronization
         """
         self.root = root
         self.config = config
         self.recording_state = recording_state
         self.ui_state = ui_state
-        self.shared_state = shared_state or {}
+        self.manager_dict = manager_dict or {}
         self.app_callbacks = app_callbacks or {}
         self.settings_manager = settings_manager or SettingsManager()
+        self.shared_audio_state = shared_audio_state
 
         # Get screen information
         self._setup_screen_geometry()
@@ -88,6 +91,7 @@ class MainWindow:
                 self.info_overlay_var.set(True)
             # Show after window is ready
             self.root.after(100, lambda: self._show_info_overlay_on_startup())
+
 
         # Bind resize events
         self.root.bind('<Configure>', self._on_window_resize)
@@ -407,7 +411,7 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
                 self.root.wm_iconphoto(True, icon)
         except Exception as e:
             # Icon setting failed, but that's okay
-            if self.shared_state.get('debug', False):
+            if self.manager_dict.get('debug', False):
                 print(f"Could not set window icon: {e}")
 
     def _create_ui(self) -> None:
@@ -575,7 +579,8 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
             self.spec_frame,
             self.config.audio,
             self.config.display,
-            self.shared_state
+            self.manager_dict,
+            self.shared_audio_state
         )
 
         self.ui_state.spectrogram_visible = True

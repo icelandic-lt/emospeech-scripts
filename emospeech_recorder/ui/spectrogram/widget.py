@@ -4,7 +4,6 @@ from typing import Optional, List
 import numpy as np
 import tkinter as tk
 import queue
-from scipy import interpolate
 
 from ...constants import AudioConstants, UIConstants
 from ...audio.processor import ClippingDetector
@@ -45,16 +44,18 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
     FIGURE_PADDING = 20
 
     def __init__(self, parent: tk.Widget, audio_config: AudioConfig,
-                 display_config: DisplayConfig, shared_state: dict = None):
+                 display_config: DisplayConfig, manager_dict: dict = None,
+                 shared_audio_state = None):
         """Initialize the mel spectrogram widget.
 
         Args:
             parent: Parent tkinter widget
             audio_config: Audio configuration
             display_config: Display configuration
-            shared_state: Shared application state
+            manager_dict: Shared application state
         """
-        super().__init__(parent, audio_config, display_config, shared_state)
+        super().__init__(parent, audio_config, display_config, manager_dict)
+        self.shared_audio_state = shared_audio_state
 
         # Debug flag for comparing processing
         self._debug_processing_comparison = False
@@ -110,12 +111,14 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
             audio_config.sample_rate
         )
 
+        # Create playback handler with shared audio state
         self.playback_handler = PlaybackHandler(
             self.parent,
             self.ax,
             self.playback_controller,
             self.zoom_controller,
-            self.spec_frames
+            self.spec_frames,
+            self.shared_audio_state
         )
 
         self.recording_display = RecordingDisplay(
@@ -237,14 +240,29 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
             self._display_resampled_frames(visible_frames, start_frame, end_frame,
                                          min_duration_seconds=UIConstants.SPECTROGRAM_DISPLAY_SECONDS)
 
-    def start_recording(self) -> None:
-        """Start recording animation."""
+    def start_recording(self, sample_rate: int) -> None:
+        """Start recording animation.
+
+        Args:
+            sample_rate: Sample rate for the recording
+        """
         # Clear the audio queue first
         while not self.audio_queue.empty():
             try:
                 self.audio_queue.get_nowait()
             except queue.Empty:
                 break
+
+        # Update recording handler sample rate
+        self.recording_handler.sample_rate = sample_rate
+        self.recording_handler.frames_per_second = sample_rate / AudioConstants.HOP_LENGTH
+        self.recording_handler.buffer_size = int(UIConstants.SPECTROGRAM_DISPLAY_SECONDS * sample_rate)
+        self.recording_handler.audio_buffer = np.zeros(self.recording_handler.buffer_size)
+        self.recording_handler.buffer_position = 0
+
+        # Also update widget's own frames_per_second
+        self.frames_per_second = sample_rate / AudioConstants.HOP_LENGTH
+        self.time_per_frame = AudioConstants.HOP_LENGTH / sample_rate
 
         # Start recording
         self.recording_handler.start_recording()
@@ -311,13 +329,18 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
         self.draw_idle()
 
     # Playback methods
-    def start_playback(self, duration: float) -> None:
-        """Start playback animation."""
+    def start_playback(self, duration: float, sample_rate: int) -> None:
+        """Start playback animation.
+
+        Args:
+            duration: Playback duration in seconds
+            sample_rate: Sample rate of the audio being played
+        """
         recording_duration = self.recording_display.recording_duration
         if recording_duration <= 0:
             recording_duration = self.recording_handler.current_time
 
-        self.playback_handler.start_playback(duration, recording_duration)
+        self.playback_handler.start_playback(duration, recording_duration, sample_rate)
 
     def stop_playback(self) -> None:
         """Stop playback animation."""
@@ -326,10 +349,6 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
     # Display methods
     def show_recording(self, audio_data: np.ndarray, sample_rate: int) -> None:
         """Display a complete recording."""
-        # Debug: Compare with live processing if enabled
-        if self._debug_processing_comparison:
-            self._compare_processing_methods(audio_data, sample_rate)
-
         # Process recording
         display_data, adaptive_n_mels, duration = self.recording_display.process_recording(
             audio_data, sample_rate
@@ -703,22 +722,3 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
                 UIConstants.ANIMATION_UPDATE_MS,
                 self._recording_update_loop
             )
-
-    def _compare_processing_methods(self, audio_data: np.ndarray, sample_rate: int) -> None:
-        """Compare live recording vs playback processing for debugging."""
-        print("\n[DEBUG] Comparing processing methods...")
-
-        # Take first frame
-        frame = audio_data[:AudioConstants.N_FFT]
-
-        # Process with recording handler's mel processor
-        mel_db_live, _ = self.mel_processor.process(frame)
-        print(f"Live processor: min={np.min(mel_db_live):.1f}dB, max={np.max(mel_db_live):.1f}dB, mean={np.mean(mel_db_live):.1f}dB")
-
-        # Process with playback processor (if different sample rate)
-        if sample_rate != self.audio_config.sample_rate:
-            playback_processor, _ = MelProcessorFactory.create_for_sample_rate(sample_rate, self.display_config.fmin)
-            mel_db_playback, _ = playback_processor.process(frame)
-            print(f"Playback processor: min={np.min(mel_db_playback):.1f}dB, max={np.max(mel_db_playback):.1f}dB, mean={np.mean(mel_db_playback):.1f}dB")
-        else:
-            print("Same sample rate - using same processor")

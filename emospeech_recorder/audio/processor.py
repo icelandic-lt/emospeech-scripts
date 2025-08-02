@@ -76,7 +76,6 @@ class ClippingDetector(AudioProcessor):
         Note:
             Handles both normalized (-1 to 1) and raw audio data
         """
-        # Use centralized normalization
         audio_norm = normalize_audio(audio_data)
         max_val = np.max(np.abs(audio_norm))
         return max_val >= self.threshold
@@ -180,7 +179,7 @@ class MelSpectrogramProcessor(AudioProcessor):
 
     def process(self, audio_data: np.ndarray,
                 normalization_factor: Optional[float] = None) -> Tuple[np.ndarray, Optional[float]]:
-        """Convert audio frame to mel-scale dB values and detect highest frequency.
+        """Convert audio frame to mel-scale dB values and detect the highest frequency.
 
         Processes a single frame of audio data to produce mel-scale
         magnitude values in decibels.
@@ -218,11 +217,11 @@ class MelSpectrogramProcessor(AudioProcessor):
         # Clamp to reasonable range - clip to 0 dB max (not DB_MAX which is for display)
         mel_db = np.clip(mel_db, AudioConstants.DB_MIN, 0)
 
-        # Detect highest frequency with significant energy
-        # Method 1: Use the raw FFT power spectrum for precise frequency detection
+        # Detect the highest frequency with significant energy
+        # Use the raw FFT power spectrum for precise frequency detection
         power_db = 10 * np.log10(power[:self.n_fft // 2 + 1] + AudioConstants.DB_REFERENCE)
 
-        # Find highest frequency above noise floor
+        # Find the highest frequency above noise floor
         significant_bins = np.where(power_db > AudioConstants.FREQUENCY_NOISE_FLOOR_DB)[0]
 
         if len(significant_bins) > 0:
@@ -231,51 +230,7 @@ class MelSpectrogramProcessor(AudioProcessor):
             freq_per_bin = self.sample_rate / self.n_fft
             highest_freq = highest_bin * freq_per_bin
             # Clamp to Nyquist frequency (sample_rate / 2)
-            highest_freq = min(highest_freq, self.sample_rate / 2)
+            highest_freq = min(float(highest_freq), self.sample_rate / 2)
         else:
             highest_freq = None
-
-        # Method 2 (Alternative): Use mel bins for approximate detection
-        # This is ~10x faster but less precise
-        # Uncomment to use mel-based detection:
-        # mel_threshold = -40  # dB threshold for mel bins
-        # significant_mel_bins = np.where(mel_db > mel_threshold)[0]
-        # if len(significant_mel_bins) > 0:
-        #     highest_mel_bin = significant_mel_bins[-1]
-        #     highest_freq = self.mel_frequencies[highest_mel_bin]
-        # else:
-        #     highest_freq = None
-
         return mel_db, highest_freq
-
-    def process_file(self, audio_data: np.ndarray,
-                     normalization_factor: Optional[float] = None) -> Tuple[np.ndarray, int]:
-        """Process entire audio file to mel spectrogram frames.
-
-        Converts a complete audio signal to a sequence of mel spectrogram
-        frames using a sliding window approach.
-
-        Args:
-            audio_data: Complete audio signal
-            normalization_factor: Optional normalization factor
-
-        Returns:
-            Tuple[np.ndarray, int]:
-                - Mel spectrogram (n_mels x n_frames)
-                - Number of frames processed
-
-        Note:
-            Returns transposed array for display (frequency bins as rows)
-        """
-        frames = []
-        max_freq = 0.0
-
-        for i in range(0, len(audio_data) - self.n_fft + 1, self.hop_length):
-            frame = audio_data[i:i + self.n_fft]
-            mel_db, highest_freq = self.process(frame, normalization_factor)
-            frames.append(mel_db)
-            if highest_freq and highest_freq > max_freq:
-                max_freq = highest_freq
-
-        result = np.array(frames).T
-        return result, len(frames), max_freq  # Return transposed for display

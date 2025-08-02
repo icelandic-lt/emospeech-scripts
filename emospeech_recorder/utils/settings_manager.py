@@ -17,6 +17,7 @@ class UserSettings:
     bit_depth: int = 24
     input_device: Optional[str] = None
     output_device: Optional[str] = None
+    audio_sync_response_time_ms: float = 10.0
 
     # Display settings
     show_spectrogram: bool = True

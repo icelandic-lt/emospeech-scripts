@@ -1,226 +1,216 @@
-"""Audio recording functionality."""
+"""Audio recorder with hardware-synchronized position updates.
 
-from typing import Optional, Callable, Any
+This module implements recording with struct-based shared memory
+for inter-process communication.
+"""
+
+import sys
+import numpy as np
+import sounddevice as sd
+from pathlib import Path
+from typing import Optional
 import multiprocessing as mp
 import queue
-import sounddevice as sd
-import numpy as np
-import soundfile as sf
-from pathlib import Path
 import traceback
+import soundfile as sf
 
-from ..constants import AudioConstants, FileConstants
+from .shared_state import SharedState, SHARED_STATUS_INVALID
 from ..utils.config import AudioConfig
+from ..utils.audio_utils import calculate_blocksize
 
 
 class AudioRecorder:
-    """Handles audio recording with real-time processing.
+    """Audio recorder with struct-based synchronized position updates."""
 
-    This class manages audio recording using sounddevice, capturing
-    audio in real-time and optionally sending chunks to a processing
-    queue for visualization. It supports various audio formats and
-    devices as configured.
-
-    Attributes:
-        config: Audio configuration (device, format, sample rate)
-        audio_queue: Queue for sending audio chunks to UI process
-        shared_state: Shared dictionary for process communication
-        is_recording: Flag indicating recording state
-        audio_data: List of recorded audio chunks
-        stream: sounddevice InputStream instance
-    """
-
-    def __init__(self,
-                 config: AudioConfig,
-                 audio_queue: mp.Queue,
-                 shared_state: dict):
-        """Initialize the audio recorder.
+    def __init__(self, config: AudioConfig, shared_state_name: str,
+                 audio_queue: Optional[mp.Queue] = None):
+        """Initialize synchronized audio recorder.
 
         Args:
-            config: Audio configuration with device and format settings
-            audio_queue: Queue for sending audio data to UI process
-            shared_state: Shared state dictionary with 'recording' and
-                'audio_queue_active' flags
+            config: Audio configuration
+            shared_state_name: Name of shared memory block
+            audio_queue: Optional queue for sending audio to visualization
         """
         self.config = config
         self.audio_queue = audio_queue
-        self.shared_state = shared_state
+
+        # Attach to existing shared state
+        self.shared_state = SharedState(create=False)
+        self.shared_state.attach_to_existing(shared_state_name)
 
         # Recording state
         self.is_recording = False
-        self.audio_data = []
+        self.audio_chunks = []
+        self.stream: Optional[sd.InputStream] = None
+        self.current_position = 0
 
-        # Configure sounddevice
-        self._configure_audio_device()
-
-    def _configure_audio_device(self) -> None:
-        """Configure audio device settings.
-
-        Sets sounddevice defaults for input device, sample rate,
-        channels, and data type based on configuration.
-        """
-        if self.config.input_device is not None:
-            sd.default.device[0] = self.config.input_device
-
-        sd.default.samplerate = self.config.sample_rate
-        sd.default.channels = self.config.channels
-        sd.default.dtype = self.config.dtype
+        # Calculate blocksize from response time setting
+        self.blocksize = calculate_blocksize(
+            config.sync_response_time_ms,
+            config.sample_rate
+        )
 
     def start_recording(self) -> None:
-        """Start audio recording.
+        """Start synchronized recording."""
+        # First check recording state
+        recording_state = self.shared_state.get_recording_state()
+        if recording_state.get('status', 0) == SHARED_STATUS_INVALID:
+            print("ERROR: Recording state not initialized", file=sys.stderr)
+            return
 
-        Initializes recording state and starts a sounddevice input
-        stream with a callback for processing audio chunks.
-        """
+        # Read current audio settings from shared state
+        settings = self.shared_state.get_audio_settings()
+
+        # Check if settings are properly initialized
+        if settings.get('status', 0) == SHARED_STATUS_INVALID:
+            print("ERROR: Audio settings not initialized (invalid status)", file=sys.stderr)
+            print(f"ERROR: Settings: {settings}", file=sys.stderr)
+            return
+
+        sample_rate = settings['sample_rate']
+
+        # Update config if settings changed
+        if sample_rate != self.config.sample_rate:
+            print(f"Recording: Updating sample rate from {self.config.sample_rate} to {sample_rate}")
+            self.config.sample_rate = sample_rate
+            # Recalculate blocksize
+            self.blocksize = calculate_blocksize(
+                self.config.sync_response_time_ms,
+                sample_rate
+            )
+
+        # Reset state
         self.is_recording = True
-        self.audio_data = []
-        self.shared_state['recording'] = True
+        self.audio_chunks = []
+        self.current_position = 0
 
-        # Start recording stream
+        # Update shared state
+        self.shared_state.start_recording(sample_rate)
+
+        # Create input stream with callback
         self.stream = sd.InputStream(
-            callback=self._audio_callback,
-            blocksize=AudioConstants.AUDIO_CHUNK_SIZE,
-            samplerate=self.config.sample_rate,
+            samplerate=sample_rate,
+            blocksize=self.blocksize,
+            device=self.config.input_device,
             channels=self.config.channels,
             dtype=self.config.dtype,
-            device=self.config.input_device
+            callback=self._audio_callback
         )
-        self.stream.start()
 
-        # Debug: Print actual stream settings
-        if self.shared_state.get('debug', False):
-            print(f"Recording stream started with:")
-            print(f"  Requested sample rate: {self.config.sample_rate} Hz")
-            print(f"  Actual sample rate: {self.stream.samplerate} Hz")
-            print(f"  Device: {self.stream.device}")
-            print(f"  Channels: {self.stream.channels}")
-            print(f"  dtype: {self.stream.dtype}")
+        self.stream.start()
+        print(f"Started recording: {sample_rate}Hz, blocksize={self.blocksize}")
 
     def stop_recording(self) -> np.ndarray:
-        """Stop recording and return audio data.
-
-        Stops the audio stream and concatenates all recorded chunks
-        into a single array.
-
-        Returns:
-            np.ndarray: Complete recorded audio data
-        """
+        """Stop recording and return audio data."""
         self.is_recording = False
-        self.shared_state['recording'] = False
 
-        if hasattr(self, 'stream'):
+        if self.stream:
             self.stream.stop()
             self.stream.close()
+            self.stream = None
 
-        # Concatenate all audio chunks
-        if self.audio_data:
-            result = np.concatenate(self.audio_data)
-            return result
+        self.shared_state.stop_recording()
+
+        # Concatenate all chunks
+        if self.audio_chunks:
+            return np.concatenate(self.audio_chunks)
         return np.array([])
-
-    def _audio_callback(self, indata: np.ndarray, frames: int,
-                       time_info: Any, status: sd.CallbackFlags) -> None:
-        """Audio stream callback for recording.
-
-        Called by sounddevice for each audio chunk. Stores data
-        and optionally sends to processing queue.
-
-        Args:
-            indata: Audio input data
-            frames: Number of frames
-            time_info: Timing information
-            status: Callback status flags
-        """
-        if status and self.shared_state.get('debug', False):
-            print(f"Audio callback status: {status}")
-
-        if self.is_recording:
-            # Store audio data
-            self.audio_data.append(indata.copy())
-
-            # Send to processing queue if active
-            queue_active = self.shared_state.get('audio_queue_active', False)
-            if queue_active:
-                try:
-                    self.audio_queue.put_nowait(indata.copy())
-                except queue.Full:
-                    if self.shared_state.get('debug', False):
-                        print("Warning: Audio queue full!")
-                except Exception as e:
-                    if self.shared_state.get('debug', False):
-                        print(f"Error putting audio in queue: {e}")
 
     def save_recording(self, audio_data: np.ndarray, filepath: Path) -> None:
         """Save audio data to file.
 
         Args:
             audio_data: Audio samples to save
-            filepath: Output file path
-
-        Note:
-            Uses soundfile to write with appropriate subtype
-            (PCM_16 or PCM_24) based on configuration.
+            filepath: Path to save file
         """
+        # Get current settings from shared state
+        settings = self.shared_state.get_audio_settings()
+
+        # Check if settings are properly initialized
+        if settings.get('status', 0) == SHARED_STATUS_INVALID:
+            print("ERROR: Audio settings not initialized in save_recording (invalid status)", file=sys.stderr)
+            return
+
+        sample_rate = settings['sample_rate']
+        bit_depth = settings['bit_depth']
+
+        # Determine subtype based on format and bit depth
         if filepath.suffix.lower() == '.flac':
             # For FLAC, explicitly set subtype based on bit depth
-            if self.config.bit_depth == 24:
-                sf.write(
-                    str(filepath),
-                    audio_data,
-                    self.config.sample_rate,
-                    subtype='PCM_24'
-                )
+            if bit_depth == 24:
+                sf.write(str(filepath), audio_data, sample_rate, subtype='PCM_24')
             else:
-                sf.write(
-                    str(filepath),
-                    audio_data,
-                    self.config.sample_rate,
-                    subtype='PCM_16'
-                )
+                sf.write(str(filepath), audio_data, sample_rate, subtype='PCM_16')
         elif self.config.subtype:
             # For WAV files, use configured subtype
-            sf.write(
-                str(filepath),
-                audio_data,
-                self.config.sample_rate,
-                subtype=self.config.subtype
-            )
+            sf.write(str(filepath), audio_data, sample_rate, subtype=self.config.subtype)
         else:
             # Default behavior
-            sf.write(
-                str(filepath),
-                audio_data,
-                self.config.sample_rate
+            sf.write(str(filepath), audio_data, sample_rate)
+
+    def _audio_callback(self, indata: np.ndarray, frames: int,
+                       time_info, status) -> None:
+        """Audio stream callback with hardware timing.
+
+        Args:
+            indata: Input buffer with audio data
+            frames: Number of frames received
+            time_info: Hardware timing information
+            status: Callback status flags
+        """
+        if status:
+            print(f"Recording callback status: {status}")
+
+        if self.is_recording:
+            # Store audio chunk
+            self.audio_chunks.append(indata.copy())
+
+            # Update shared state with hardware timing
+            self.shared_state.update_recording_position(
+                self.current_position,
+                time_info.inputBufferAdcTime
             )
+
+            # Send to visualization queue if active
+            if self.audio_queue and self.shared_state.shm:
+                # Check if audio queue is active (from shared dict if available)
+                try:
+                    self.audio_queue.put_nowait(indata.copy())
+                except queue.Full:
+                    pass  # Skip if queue is full
+
+            # Update position
+            self.current_position += frames
+
+    def cleanup(self) -> None:
+        """Clean up resources."""
+        if self.stream:
+            self.stream.stop()
+            self.stream.close()
+        if self.shared_state:
+            self.shared_state.close()
 
 
 def record_process(config: AudioConfig,
-                  audio_queue: mp.Queue,
-                  shared_state: dict,
-                  control_queue: mp.Queue) -> None:
-    """Recording process function for multiprocessing.
-
-    This function runs in a separate process to handle audio recording.
-    It listens for commands and manages the recording lifecycle.
-
-    Commands:
-        - 'start': Begin recording
-        - 'stop': Stop recording and save to file
-        - 'quit': Exit the process
+                   audio_queue: mp.Queue,
+                   shared_state_name: str,
+                   control_queue: mp.Queue,
+                   manager_dict: dict) -> None:
+    """Process function for audio recording with hardware synchronization.
 
     Args:
         config: Audio configuration
-        audio_queue: Queue for sending audio data to UI process
-        shared_state: Shared state with 'save_path' and flags
-        control_queue: Queue for receiving control commands
-
-    Note:
-        The save path is retrieved from shared_state['save_path']
-        when stopping a recording.
+        audio_queue: Queue for audio visualization
+        shared_state_name: Name of shared memory block
+        control_queue: Queue for control commands
+        manager_dict: Shared manager dict (for save_path compatibility)
     """
-    recorder = AudioRecorder(config, audio_queue, shared_state)
+    recorder = None
 
     try:
+        # Create recorder with shared state
+        recorder = AudioRecorder(config, shared_state_name, audio_queue)
+
         while True:
             try:
                 command = control_queue.get(timeout=0.1)
@@ -231,15 +221,14 @@ def record_process(config: AudioConfig,
                 elif command == 'stop':
                     audio_data = recorder.stop_recording()
 
-                    # Get save path from shared state
-                    save_path = shared_state.get('save_path')
+                    # Get save path from old shared state (for compatibility)
+                    save_path = manager_dict.get('save_path')
                     if save_path and len(audio_data) > 0:
                         recorder.save_recording(audio_data, Path(save_path))
-                        if shared_state.get('debug', False):
-                            print(f"Recording saved to {save_path}")
+                        print(f"Recording saved to {save_path}")
 
                     # Clear save path
-                    shared_state['save_path'] = None
+                    manager_dict['save_path'] = None
 
                 elif command == 'quit':
                     break
@@ -249,15 +238,12 @@ def record_process(config: AudioConfig,
             except KeyboardInterrupt:
                 break
 
-    except KeyboardInterrupt:
-        if shared_state.get('debug', False):
-            print("\nRecording process interrupted by user")
     except Exception as e:
-        if shared_state.get('debug', False):
-            print(f"Recording process error: {e}")
-            traceback.print_exc()
+        print(f"Record process error: {e}")
+        traceback.print_exc()
 
     finally:
         # Cleanup
-        if recorder.is_recording:
-            recorder.stop_recording()
+        if recorder:
+            recorder.cleanup()
+        print("Recording process terminated")

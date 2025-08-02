@@ -1,174 +1,249 @@
-"""Audio playback functionality."""
+"""Audio playback with hardware-synchronized position updates.
 
-from typing import Optional, Callable
+This module implements the playback system with struct-based
+shared memory for inter-process communication.
+"""
+
+import time
+import numpy as np
+import sounddevice as sd
+from typing import Optional
 import multiprocessing as mp
 import queue
-import time
-import sounddevice as sd
-import numpy as np
-from pathlib import Path
 import traceback
 
+from .audio_buffer import AudioBuffer
+from .shared_state import SharedState
 from ..utils.config import AudioConfig
-from ..utils.file_manager import RecordingFileManager
+from ..utils.audio_utils import calculate_blocksize
 
 
 class AudioPlayer:
-    """Handles audio playback with interruption support.
+    """Audio player with struct-based synchronized position updates."""
 
-    This class provides low-level audio playback functionality using
-    sounddevice. It supports interruption via multiprocessing signals,
-    allowing playback to be stopped from other processes.
-
-    Attributes:
-        config: Audio configuration with device settings
-        is_playing: Flag indicating if audio is currently playing
-    """
-
-    def __init__(self, config: AudioConfig):
-        """Initialize the audio player.
+    def __init__(self, config: AudioConfig, shared_state_name: str):
+        """Initialize synchronized audio player.
 
         Args:
-            config: Audio configuration containing output device settings
+            config: Audio configuration
+            shared_state_name: Name of shared memory block
         """
         self.config = config
-        self.is_playing = False
-        self._configure_audio_device()
 
-    def _configure_audio_device(self) -> None:
-        """Configure audio device settings.
+        # Attach to existing shared state
+        self.shared_state = SharedState(create=False)
+        self.shared_state.attach_to_existing(shared_state_name)
 
-        Sets the default output device for sounddevice based on
-        configuration. Device can be specified by index or name.
-        """
-        if self.config.output_device is not None:
-            sd.default.device[1] = self.config.output_device
+        # Playback state
+        self.audio_buffer: Optional[AudioBuffer] = None
+        self.audio_data: Optional[np.ndarray] = None
+        self.current_position = 0
+        self.stream: Optional[sd.OutputStream] = None
+        self._stop_requested = False
 
-    def play(self, audio_data: np.ndarray, sample_rate: int,
-             stop_signal: Optional[mp.Value] = None) -> None:
-        """Play audio data with optional interruption.
+        # Calculate blocksize from response time setting
+        self.blocksize = calculate_blocksize(
+            config.sync_response_time_ms,
+            config.sample_rate
+        )
 
-        Plays audio asynchronously and monitors for stop signals.
-        The method blocks until playback completes or is interrupted.
+        self._callback_count = 0
+
+
+    def start_playback(self, audio_data: np.ndarray, sample_rate: int, audio_buffer: AudioBuffer) -> None:
+        """Start synchronized playback.
 
         Args:
-            audio_data: Audio samples to play (mono or stereo)
+            audio_data: Audio samples to play
             sample_rate: Sample rate in Hz
-            stop_signal: Optional shared value for interruption (1 = stop)
-
-        Note:
-            Uses a polling loop to check for interruption every 50ms
+            audio_buffer: Audio buffer containing the shared memory
         """
-        self.is_playing = True
+        # Stop any current playback
+        self.stop_playback()
+        time.sleep(0.1)
 
-        try:
-            # Get output device info
+        # Use provided SHM buffer with normalized data
+        self.audio_buffer = audio_buffer
+        self.audio_data = audio_buffer.get_array()  # Zero-copy
+
+        # Reset positions
+        self.current_position = 0
+        self._stop_requested = False
+        self._callback_count = 0
+
+        # Update shared state with initial position
+        self.shared_state.start_playback(len(audio_data), sample_rate)
+        self.shared_state.update_playback_position(0, 0.0)
+
+        # Create output stream with callback
+        self.stream = sd.OutputStream(
+            samplerate=sample_rate,
+            blocksize=self.blocksize,
+            device=self.config.output_device,
+            channels=1,  # Mono for now
+            dtype='float32',  # Always use float32 for sounddevice
+            callback=self._audio_callback,
+            finished_callback=self._finished_callback
+        )
+        self.stream.start()
+
+    def stop_playback(self) -> None:
+        """Stop playback and clean up."""
+        # Set stop flag first
+        self._stop_requested = True
+
+        if self.stream:
             try:
-                device_info = sd.query_devices(self.config.output_device, 'output')
-                if device_info['max_output_channels'] == 0:
-                    print(f"Error: Device {self.config.output_device} ({device_info['name']}) has no output channels")
-                    return
-            except Exception as e:
-                print(f"Error querying output device: {e}")
-                return
+                self.stream.stop()
+                self.stream.close()
+            except Exception:
+                pass
+            finally:
+                self.stream = None
 
-            # Ensure audio is the right shape for the output device
-            # If mono audio and output device expects stereo, duplicate the channel
-            if audio_data.ndim == 1 and device_info['max_output_channels'] >= 2:
-                # Convert mono to stereo by duplicating the channel
-                audio_data = np.column_stack((audio_data, audio_data))
+        self.shared_state.stop_playback()
 
-            # Start playback
-            sd.play(audio_data, sample_rate, device=self.config.output_device)
+        # Clean up shared buffer
+        if self.audio_buffer:
+            self.audio_buffer.close()
+            # Don't unlink here - the buffer was created by main process
+            self.audio_buffer = None
+            self.audio_data = None
 
-            # Wait for playback to finish, checking for stop signal
-            while sd.get_stream() and sd.get_stream().active:
-                if stop_signal and stop_signal.value:
-                    sd.stop()
-                    print("Playback interrupted")
-                    break
-                time.sleep(0.05)  # Check every 50ms
+    def _audio_callback(self, outdata: np.ndarray, frames: int,
+                       time_info, status) -> None:
+        """Audio stream callback with hardware timing.
 
-        except Exception as e:
-            print(f"Playback error: {e}")
-        finally:
-            self.is_playing = False
-
-    def stop(self) -> None:
-        """Stop current playback.
-
-        Immediately stops any audio currently playing through sounddevice.
+        Args:
+            outdata: Output buffer to fill
+            frames: Number of frames to provide
+            time_info: Hardware timing information
+            status: Callback status flags
         """
-        sd.stop()
-        self.is_playing = False
+        if status:
+            print(f"Playback callback status: {status}")
+
+        # Check if stop was requested
+        if self._stop_requested:
+            outdata.fill(0)
+            raise sd.CallbackStop()
+
+        # Update shared state with hardware timing
+        self.shared_state.update_playback_position(
+            self.current_position,
+            time_info.outputBufferDacTime
+        )
+
+
+        # Fill output buffer
+        if self.audio_data is not None:
+            remaining = len(self.audio_data) - self.current_position
+
+            if remaining > 0:
+                # Copy audio data
+                to_copy = min(frames, remaining)
+                outdata[:to_copy, 0] = self.audio_data[
+                    self.current_position:self.current_position + to_copy
+                ]
+
+                # Fill rest with silence if needed
+                if to_copy < frames:
+                    outdata[to_copy:] = 0
+
+                # Update position
+                self.current_position += to_copy
+
+                # Check if this is the last buffer
+                next_position = self.current_position + frames
+                if self.current_position < len(self.audio_data) <= next_position:
+                    # This is the last buffer - mark as finishing
+                    self.shared_state.mark_playback_finishing()
+
+                # Check if we've reached the end
+                if self.current_position >= len(self.audio_data):
+                    # Signal that playback is completed
+                    self.shared_state.mark_playback_completed()
+                    self._stop_requested = True
+                    # Return stop signal
+                    raise sd.CallbackStop()
+            else:
+                # No more audio, output silence and stop
+                outdata.fill(0)
+                self.shared_state.stop_playback()
+                self._stop_requested = True
+                raise sd.CallbackStop()
+        else:
+            # No audio loaded
+            outdata.fill(0)
+
+    def _finished_callback(self) -> None:
+        """Called when stream finishes."""
+        self.shared_state.stop_playback()
+        self.stream = None
+
+    def cleanup(self) -> None:
+        """Clean up resources."""
+        self.stop_playback()
+        if self.shared_state:
+            self.shared_state.close()
 
 
 def playback_process(config: AudioConfig,
-                    recording_dir: Path,
-                    control_queue: mp.Queue,
-                    shared_state: dict,
-                    stop_signal: mp.Value) -> None:
-    """Playback process function for multiprocessing.
-
-    This function runs in a separate process to handle audio playback
-    commands. It listens for commands on a queue and manages playback
-    state in shared memory.
-
-    Commands:
-        - {'action': 'play', 'label': str, 'take': int}: Play a recording
-        - 'stop': Stop current playback
-        - 'quit': Exit the process
+                           control_queue: mp.Queue,
+                           shared_state_name: str) -> None:
+    """Process function for audio playback with hardware synchronization.
 
     Args:
         config: Audio configuration
-        recording_dir: Directory containing recordings
-        control_queue: Queue for receiving control commands
-        shared_state: Shared state dictionary with 'playing' and 'current_file'
-        stop_signal: Signal for interrupting playback (0 = play, 1 = stop)
+        control_queue: Queue for control commands
+        shared_state_name: Name of shared memory block
     """
-    player = AudioPlayer(config)
-    file_manager = RecordingFileManager(recording_dir)
+    player = None
+    attached_buffer: Optional[AudioBuffer] = None
 
     try:
+        # Create player with shared state
+        player = AudioPlayer(config, shared_state_name)
+
         while True:
             try:
                 command = control_queue.get(timeout=0.1)
 
-                if isinstance(command, dict) and command.get('action') == 'play':
-                    # Extract playback parameters
-                    label = command.get('label')
-                    take = command.get('take', 1)
+                if isinstance(command, dict):
+                    action = command.get('action')
 
-                    if label:
-                        # Load and play audio file
-                        filepath = file_manager.get_recording_path(label, take)
+                    if action == 'play':
+                        # Get audio buffer metadata
+                        buffer_metadata = command.get('buffer_metadata')
+                        if buffer_metadata:
+                            # Attach to shared audio buffer
+                            if attached_buffer:
+                                attached_buffer.close()
 
-                        if filepath.exists():
-                            # Reset stop signal before playing
-                            stop_signal.value = 0
+                            attached_buffer = AudioBuffer.attach_to_existing(
+                                buffer_metadata['name'],
+                                tuple(buffer_metadata['shape']),
+                                np.dtype(buffer_metadata['dtype'])
+                            )
 
-                            # Update shared state
-                            shared_state['playing'] = True
-                            shared_state['current_file'] = str(filepath)
+                            # Start playback
+                            audio_data = attached_buffer.get_array()
+                            sample_rate = command.get('sample_rate', config.sample_rate)
+                            player.start_playback(audio_data, sample_rate, attached_buffer)
 
-                            # Load audio
-                            audio_data, sample_rate = file_manager.load_audio(filepath)
-
-                            print(f"Playing file: {filepath}")
-
-                            # Play with interruption support
-                            player.play(audio_data, sample_rate, stop_signal)
-
-                            # Update state when done
-                            shared_state['playing'] = False
-                            shared_state['current_file'] = None
-                            print("Playback completed")
-                        else:
-                            print(f"Recording not found: {filepath}")
+                    elif action == 'stop':
+                        player.stop_playback()
+                        # Clean up attached buffer when playback stops
+                        if attached_buffer:
+                            attached_buffer.close()
+                            attached_buffer = None
 
                 elif command == 'stop':
-                    player.stop()
-                    stop_signal.value = 1
+                    player.stop_playback()
+                    # Clean up attached buffer when playback stops
+                    if attached_buffer:
+                        attached_buffer.close()
+                        attached_buffer = None
 
                 elif command == 'quit':
                     break
@@ -176,105 +251,15 @@ def playback_process(config: AudioConfig,
             except queue.Empty:
                 continue
             except KeyboardInterrupt:
-                # Handle Ctrl-C gracefully
                 break
 
-    except KeyboardInterrupt:
-        if shared_state.get('debug', False):
-            print("\nPlayback process interrupted by user")
     except Exception as e:
         print(f"Playback process error: {e}")
         traceback.print_exc()
 
     finally:
         # Cleanup
-        player.stop()
-        shared_state['playing'] = False
-
-
-class PlaybackController:
-    """High-level controller for playback operations.
-
-    This class provides a convenient interface for controlling audio
-    playback from the main process. It manages communication with the
-    playback process via queues and shared state.
-
-    Attributes:
-        config: Audio configuration
-        recording_dir: Directory containing recordings
-        playback_queue: Queue for sending commands
-        shared_state: Shared state for status monitoring
-        stop_signal: Signal for interrupting playback
-        file_manager: Manager for recording file operations
-    """
-
-    def __init__(self,
-                 config: AudioConfig,
-                 recording_dir: Path,
-                 playback_queue: mp.Queue,
-                 shared_state: dict,
-                 stop_signal: mp.Value):
-        """Initialize the playback controller.
-
-        Args:
-            config: Audio configuration
-            recording_dir: Directory containing recordings
-            playback_queue: Queue for sending commands to playback process
-            shared_state: Shared state dictionary for status monitoring
-            stop_signal: Signal for interrupting playback
-        """
-        self.config = config
-        self.recording_dir = recording_dir
-        self.playback_queue = playback_queue
-        self.shared_state = shared_state
-        self.stop_signal = stop_signal
-        self.file_manager = RecordingFileManager(recording_dir)
-
-    def play_recording(self, label: str, take: int) -> bool:
-        """Play a specific recording.
-
-        Stops any current playback and starts playing the specified
-        recording. Checks file existence before sending play command.
-
-        Args:
-            label: Recording label/ID
-            take: Take number (1-based)
-
-        Returns:
-            bool: True if playback started, False if file not found
-        """
-        # Stop any current playback
-        self.stop_playback()
-
-        # Check if file exists
-        if not self.file_manager.recording_exists(label, take):
-            return False
-
-        # Reset stop signal
-        self.stop_signal.value = 0
-
-        # Send play command
-        self.playback_queue.put({
-            'action': 'play',
-            'label': label,
-            'take': take
-        })
-
-        return True
-
-    def stop_playback(self) -> None:
-        """Stop current playback.
-
-        Sets the stop signal and sends stop command to the playback
-        process. This will interrupt any audio currently playing.
-        """
-        self.stop_signal.value = 1
-        self.playback_queue.put('stop')
-
-    def is_playing(self) -> bool:
-        """Check if audio is currently playing.
-
-        Returns:
-            bool: True if audio is playing, False otherwise
-        """
-        return self.shared_state.get('playing', False)
+        if player:
+            player.cleanup()
+        if attached_buffer:
+            attached_buffer.close()

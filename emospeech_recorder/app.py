@@ -15,14 +15,17 @@ import traceback
 
 import sounddevice as sd
 
-from .constants import KeyBindings, UIConstants
+from .constants import KeyBindings, UIConstants, FileConstants
 from .utils.config import RecorderConfig, load_config
 from .utils.state import AppState
 from .utils.file_manager import RecordingFileManager, ScriptFileManager
 from .utils.settings_manager import SettingsManager
 from .ui.main_window import MainWindow
 from .audio.recorder import record_process
-from .audio.player import playback_process, PlaybackController
+from .audio.player import playback_process
+from .audio.audio_buffer import AudioBuffer
+from .audio.buffer_manager import BufferManager
+from .audio.shared_state import SharedState
 
 
 class EmoSpeechRecorder:
@@ -44,7 +47,6 @@ class EmoSpeechRecorder:
         audio_queue: Multiprocessing queue for real-time audio data
         record_queue: Queue for controlling the recording process
         playback_queue: Queue for controlling the playback process
-        stop_signal: Shared value for interrupting playback
     """
 
     def __init__(self, config: RecorderConfig, script_file: Path, recording_dir: Path, debug: bool = False):
@@ -93,7 +95,7 @@ class EmoSpeechRecorder:
         # Initial display update
         self._update_display()
 
-        # Load initial spectrogram after UI is ready (like in rec_improved.py)
+        # Load initial spectrogram after UI is ready
         if hasattr(self.window, 'mel_spectrogram'):
             self.root.after(UIConstants.INITIAL_DISPLAY_DELAY_MS, self._show_saved_recording)
 
@@ -101,12 +103,13 @@ class EmoSpeechRecorder:
         """Apply saved settings to configuration."""
         settings = self.settings_manager.settings
 
-        # Apply audio settings
+        # Audio settings
         self.config.audio.sample_rate = settings.sample_rate
         self.config.audio.bit_depth = settings.bit_depth
+        self.config.audio.sync_response_time_ms = settings.audio_sync_response_time_ms
         self.config.audio.__post_init__()  # Update dtype and subtype
 
-        # Apply display settings
+        # Display settings
         self.config.display.show_spectrogram = settings.show_spectrogram
         self.config.ui.fullscreen = settings.fullscreen
 
@@ -126,7 +129,29 @@ class EmoSpeechRecorder:
         """Initialize multiprocessing components."""
         # Create manager for shared state
         self.manager = mp.Manager()
-        self.shared_state = self.manager.dict()
+        self.manager_dict = self.manager.dict()
+
+        # Create buffer manager for shared memory lifecycle
+        self.buffer_manager = BufferManager(max_buffers=5)
+
+        # Create struct-based shared state
+        self.shared_state = SharedState(create=True)
+
+        # Initialize audio settings in struct shared state
+        # Determine format type based on file extension constant
+        format_type = 1 if FileConstants.AUDIO_FILE_EXTENSION == '.flac' else 0
+        self.shared_state.update_audio_settings(
+            sample_rate=self.config.audio.sample_rate,
+            bit_depth=self.config.audio.bit_depth,
+            channels=self.config.audio.channels,
+            format_type=format_type
+        )
+
+        # Initialize recording state to STOPPED
+        self.shared_state.stop_recording()
+
+        # Initialize playback state to IDLE
+        self.shared_state.stop_playback()
 
         # Audio queue for real-time processing
         self.audio_queue = mp.Queue(maxsize=100)
@@ -135,15 +160,12 @@ class EmoSpeechRecorder:
         self.record_queue = mp.Queue()
         self.playback_queue = mp.Queue()
 
-        # Stop signal for playback
-        self.stop_signal = mp.Value('i', 0)
-
         # Initialize shared state
-        self.shared_state['recording'] = False
-        self.shared_state['playing'] = False
-        self.shared_state['audio_queue_active'] = self.config.display.show_spectrogram
-        self.shared_state['save_path'] = None
-        self.shared_state['debug'] = self.debug
+        self.manager_dict['recording'] = False
+        self.manager_dict['playing'] = False
+        self.manager_dict['audio_queue_active'] = self.config.display.show_spectrogram
+        self.manager_dict['save_path'] = None
+        self.manager_dict['debug'] = self.debug
 
     def _init_ui(self) -> None:
         """Initialize the user interface."""
@@ -192,18 +214,10 @@ class EmoSpeechRecorder:
             self.config,
             self.state.recording,
             self.state.ui,
-            self.shared_state,
+            self.manager_dict,
             app_callbacks,
-            self.settings_manager
-        )
-
-        # Initialize playback controller
-        self.playback_controller = PlaybackController(
-            self.config.audio,
-            self.recording_dir,
-            self.playback_queue,
-            self.shared_state,
-            self.stop_signal
+            self.settings_manager,
+            self.shared_state  # Pass struct shared state
         )
 
         # Start audio queue processing (widget is always created now)
@@ -237,30 +251,32 @@ class EmoSpeechRecorder:
 
     def _start_processes(self) -> None:
         """Start background processes."""
-        # Recording process
+        # Recording process with hardware synchronization
         self.record_process = mp.Process(
             target=record_process,
-            args=(self.config.audio, self.audio_queue, self.shared_state, self.record_queue)
+            args=(self.config.audio, self.audio_queue, self.shared_state.name,
+                  self.record_queue, self.manager_dict)
         )
         self.record_process.start()
 
-        # Playback process
+        # Playback process with hw synchronization
         self.playback_process = mp.Process(
             target=playback_process,
-            args=(self.config.audio, self.recording_dir, self.playback_queue,
-                  self.shared_state, self.stop_signal)
+            args=(self.config.audio, self.playback_queue, self.shared_state.name)
         )
         self.playback_process.start()
 
     def _start_audio_queue_processing(self) -> None:
         """Start processing audio queue for real-time display."""
-        self.shared_state['audio_queue_active'] = True
+        self.manager_dict['audio_queue_active'] = True
 
         # Start a transfer thread
         def audio_transfer_thread():
-            while self.shared_state.get('audio_queue_active', False):
+            while self.manager_dict.get('audio_queue_active', False):
                 try:
                     audio_data = self.audio_queue.get(timeout=0.1)
+
+                    # Update mel spectrogram if visible
                     if hasattr(self.window, 'mel_spectrogram') and self.window.ui_state.spectrogram_visible:
                         # Use after() to update in main thread
                         self.root.after(0, lambda data=audio_data: self.window.mel_spectrogram.update_audio(data))
@@ -291,7 +307,7 @@ class EmoSpeechRecorder:
     def _start_recording(self) -> None:
         """Start recording."""
         # Stop any playback
-        self.playback_controller.stop_playback()
+        self._stop_synchronized_playback()
 
         # Update state
         self.state.recording.is_recording = True
@@ -305,12 +321,12 @@ class EmoSpeechRecorder:
 
         # Set save path
         save_path = self.file_manager.get_recording_path(current_label, take_num)
-        self.shared_state['save_path'] = str(save_path)
+        self.manager_dict['save_path'] = str(save_path)
 
         # Clear and start spectrogram recording
         if hasattr(self.window, 'mel_spectrogram'):
             self.window.mel_spectrogram.clear()
-            self.window.mel_spectrogram.start_recording()
+            self.window.mel_spectrogram.start_recording(self.config.audio.sample_rate)
 
         # Update info overlay if visible to show recording parameters
         if self.window.info_overlay.visible:
@@ -363,7 +379,7 @@ class EmoSpeechRecorder:
 
         # Stop playback exactly like Left/Right keys do
         sd.stop()  # Immediate stop in main process
-        self.playback_controller.stop_playback()
+        self._stop_synchronized_playback()
         if hasattr(self.window, 'mel_spectrogram'):
             self.window.mel_spectrogram.stop_playback()
 
@@ -373,16 +389,29 @@ class EmoSpeechRecorder:
         current_label = self.state.recording.current_label
         current_take = self.state.recording.get_current_take(current_label)
 
-        # Reset stop signal before playing
-        self.stop_signal.value = 0
+        # Hardware synchronized playback
+        filepath = self.file_manager.get_recording_path(current_label, current_take)
+        if filepath.exists():
+            # Load audio
+            audio_data, sr = self.file_manager.load_audio(filepath)
+            duration = len(audio_data) / sr
 
-        if self.playback_controller.play_recording(current_label, current_take):
-            # Start playback animation
+            # Create shared audio buffer using buffer manager
+            audio_buffer = self.buffer_manager.create_buffer(audio_data)
+
+            # Send play command with buffer metadata
+            self.playback_queue.put({
+                'action': 'play',
+                'buffer_metadata': audio_buffer.get_metadata(),
+                'sample_rate': sr
+            })
+
+            # Close our reference but don't unlink - buffer manager handles lifecycle
+            audio_buffer.close()
+
+            # Start animations
             if hasattr(self.window, 'mel_spectrogram'):
-                filepath = self.file_manager.get_recording_path(current_label, current_take)
-                audio_data, sr = self.file_manager.load_audio(filepath)
-                duration = len(audio_data) / sr
-                self.window.mel_spectrogram.start_playback(duration)
+                self.window.mel_spectrogram.start_playback(duration, sr)
 
     def _navigate(self, direction: int) -> None:
         """Navigate to next/previous utterance."""
@@ -390,7 +419,7 @@ class EmoSpeechRecorder:
         if self.state.recording.is_recording:
             self._stop_recording()
 
-        self.playback_controller.stop_playback()
+        self._stop_synchronized_playback()
         if hasattr(self.window, 'mel_spectrogram'):
             self.window.mel_spectrogram.stop_playback()
 
@@ -416,7 +445,7 @@ class EmoSpeechRecorder:
             return
 
         # Stop playback and animation
-        self.playback_controller.stop_playback()
+        self._stop_synchronized_playback()
         if hasattr(self.window, 'mel_spectrogram'):
             self.window.mel_spectrogram.stop_playback()
 
@@ -511,8 +540,8 @@ class EmoSpeechRecorder:
         """Toggle mel spectrogram visibility."""
         self.window.toggle_spectrogram()
 
-        # Update audio queue state
-        self.shared_state['audio_queue_active'] = self.state.ui.spectrogram_visible
+        # Update audio queue state - needed if either spectrogram or level meter is visible
+        self._update_audio_queue_state()
 
         # Restart queue processing if needed
         if self.state.ui.spectrogram_visible:
@@ -526,6 +555,15 @@ class EmoSpeechRecorder:
         # Update menu checkbox if it exists
         if hasattr(self.window, 'mel_spectrogram_var'):
             self.window.mel_spectrogram_var.set(self.state.ui.spectrogram_visible)
+
+    def _update_audio_queue_state(self) -> None:
+        """Update audio queue state based on whether any visualizations need audio."""
+        # Audio queue is needed if either spectrogram or level meter is visible
+        needs_audio = (self.state.ui.spectrogram_visible or
+                      (hasattr(self.window, 'level_meter_overlay') and
+                       self.window.level_meter_overlay.visible))
+
+        self.manager_dict['audio_queue_active'] = needs_audio
 
     def _show_info_overlay(self) -> None:
         """Show audio info overlay with current recording information."""
@@ -588,28 +626,32 @@ class EmoSpeechRecorder:
     def _update_audio_settings(self) -> None:
         """Handle audio settings changes.
 
-        Restarts audio processes with new settings.
+        Updates struct shared state with new settings instead of restarting processes.
         """
-        # Stop current processes
-        self.record_queue.put('quit')
-        self.playback_queue.put('quit')
+        # Note: self.config.audio should already be updated by the settings dialog
+        # before this method is called
 
-        # Wait for processes to finish
-        self.record_process.join(timeout=1)
-        self.playback_process.join(timeout=1)
+        # Update struct shared state with new audio settings
+        # Determine format type based on file extension constant
+        format_type = 1 if FileConstants.AUDIO_FILE_EXTENSION == '.flac' else 0
 
-        # Restart processes with new settings
-        self._start_processes()
+        # Update settings in shared memory
+        self.shared_state.update_audio_settings(
+            sample_rate=self.config.audio.sample_rate,
+            bit_depth=self.config.audio.bit_depth,
+            channels=self.config.audio.channels,
+            format_type=format_type
+        )
 
-        # Restart audio queue processing if needed
-        if self.config.display.show_spectrogram and hasattr(self.window, 'mel_spectrogram'):
-            self._start_audio_queue_processing()
+        # Log the update
+        print(f"Updated audio settings: {self.config.audio.sample_rate}Hz, "
+              f"{self.config.audio.bit_depth}-bit, {self.config.audio.channels} channel(s)")
 
     def _delete_current_recording(self) -> None:
         """Delete the current recording take."""
         # Stop any playback first
         sd.stop()
-        self.playback_controller.stop_playback()
+        self._stop_synchronized_playback()
         if hasattr(self.window, 'mel_spectrogram'):
             self.window.mel_spectrogram.stop_playback()
 
@@ -670,6 +712,21 @@ class EmoSpeechRecorder:
         )
         self._update_take_status()
 
+    def _stop_synchronized_playback(self) -> None:
+        """Stop synchronized playback."""
+        self.playback_queue.put('stop')
+
+    def _start_playback_level_monitoring(self, filepath) -> None:
+        """Start monitoring audio levels during playback.
+
+        Args:
+            filepath: Path to the audio file being played
+        """
+        # This is a placeholder for level monitoring during playback
+        # The actual implementation would need to monitor the shared state
+        # or audio output to update the level meter
+        pass
+
     def _quit(self) -> None:
         """Clean shutdown of the application."""
         print("Shutting down...")
@@ -683,7 +740,16 @@ class EmoSpeechRecorder:
             self._stop_recording()
 
         # Stop audio queue processing
-        self.shared_state['audio_queue_active'] = False
+        self.manager_dict['audio_queue_active'] = False
+
+        # Stop any playback monitoring
+        if hasattr(self, '_playback_monitor_active'):
+            self._playback_monitor_active = False
+
+        # Clean up struct shared state
+        if hasattr(self, 'shared_state'):
+            self.shared_state.close()
+            self.shared_state.unlink()
 
         # Wait for audio transfer thread to finish
         if hasattr(self, 'transfer_thread') and self.transfer_thread.is_alive():
@@ -702,6 +768,10 @@ class EmoSpeechRecorder:
             self.record_process.terminate()
         if self.playback_process.is_alive():
             self.playback_process.terminate()
+
+        # Clean up all shared memory buffers after processes are done
+        if hasattr(self, 'buffer_manager'):
+            self.buffer_manager.cleanup_all(wait_time=0.15)
 
         # Close UI
         self.root.quit()

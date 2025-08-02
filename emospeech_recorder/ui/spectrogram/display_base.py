@@ -1,6 +1,6 @@
 """Base display functionality for spectrogram visualization."""
 
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 import numpy as np
 import tkinter as tk
 import matplotlib
@@ -27,19 +27,19 @@ class SpectrogramDisplayBase:
     """
 
     def __init__(self, parent: tk.Widget, audio_config: AudioConfig,
-                 display_config: DisplayConfig, shared_state: dict = None):
+                 display_config: DisplayConfig, manager_dict: dict = None):
         """Initialize display base.
 
         Args:
             parent: Parent tkinter widget
             audio_config: Audio configuration
             display_config: Display configuration
-            shared_state: Shared application state
+            manager_dict: Shared manager dictionary
         """
         self.parent = parent
         self.audio_config = audio_config
         self.display_config = display_config
-        self.shared_state = shared_state or {}
+        self.manager_dict = manager_dict or {}
 
         # Display components (initialized in subclass)
         self.fig: Optional[Figure] = None
@@ -160,7 +160,7 @@ class SpectrogramDisplayBase:
     def _apply_adaptive_layout(self) -> None:
         """Apply simple, consistent layout."""
         # Use fixed margins that work well
-        self.fig.tight_layout(rect=[0, 0, 0.98, 1])
+        self.fig.tight_layout(rect=(0, 0, 0.98, 1))
 
     def _on_spec_frames_changed(self, old_frames: int, new_frames: int) -> None:
         """Called when spec_frames changes due to resize.
@@ -211,7 +211,7 @@ class SpectrogramDisplayBase:
 
         return resampled
 
-    def update_display_data(self, data: np.ndarray, extent: List[float] = None) -> None:
+    def update_display_data(self, data: np.ndarray, extent: Optional[Tuple[float, float, float, float]] = None) -> None:
         """Update the displayed spectrogram data.
 
         Args:

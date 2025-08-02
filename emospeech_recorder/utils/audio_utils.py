@@ -90,3 +90,104 @@ def ensure_mono_normalized(audio_data: np.ndarray) -> np.ndarray:
     """
     audio_data = convert_to_mono(audio_data)
     return normalize_audio(audio_data)
+
+
+def calculate_blocksize(response_time_ms: float, sample_rate: int) -> int:
+    """Calculate audio blocksize from desired response time.
+
+    Args:
+        response_time_ms: Desired response time in milliseconds
+        sample_rate: Sample rate in Hz
+
+    Returns:
+        Blocksize rounded to nearest power of 2
+    """
+    # Calculate ideal blocksize
+    ideal_blocksize = int(sample_rate * response_time_ms / 1000)
+
+    # Define limits
+    MIN_BLOCKSIZE = 64   # Hardware minimum
+    MAX_BLOCKSIZE = 4096 # Prevent excessive latency
+
+    # Round to nearest power of 2
+    blocksize = round_to_nearest_power_of_2(ideal_blocksize)
+
+    # Apply limits
+    return max(MIN_BLOCKSIZE, min(blocksize, MAX_BLOCKSIZE))
+
+
+def round_to_nearest_power_of_2(n: int) -> int:
+    """Round integer to nearest power of 2.
+
+    Args:
+        n: Integer to round
+
+    Returns:
+        Nearest power of 2
+    """
+    if n <= 0:
+        return 1
+
+    # Find the power of 2 on either side
+    lower = 1 << (n - 1).bit_length() - 1
+    upper = 1 << (n - 1).bit_length()
+
+    # Return the closer one
+    if n - lower < upper - n:
+        return lower
+    else:
+        return upper
+
+
+def db_to_linear(db: float) -> float:
+    """Convert decibels to linear amplitude.
+
+    Args:
+        db: Value in decibels
+
+    Returns:
+        Linear amplitude (0.0 to 1.0)
+    """
+    return 10.0 ** (db / 20.0)
+
+
+def linear_to_db(linear: float, ref: float = 1.0, min_db: float = -80.0) -> float:
+    """Convert linear amplitude to decibels.
+
+    Args:
+        linear: Linear amplitude value
+        ref: Reference value (default 1.0)
+        min_db: Minimum dB value to return for very small inputs
+
+    Returns:
+        Value in decibels
+    """
+    if linear <= 0:
+        return min_db
+
+    db = 20.0 * np.log10(linear / ref)
+    return max(db, min_db)
+
+
+def rms(samples: np.ndarray) -> float:
+    """Calculate RMS (Root Mean Square) of audio samples.
+
+    Args:
+        samples: Audio samples
+
+    Returns:
+        RMS value
+    """
+    return np.sqrt(np.mean(samples ** 2))
+
+
+def peak(samples: np.ndarray) -> float:
+    """Calculate peak (maximum absolute) value of audio samples.
+
+    Args:
+        samples: Audio samples
+
+    Returns:
+        Peak value
+    """
+    return np.max(np.abs(samples))

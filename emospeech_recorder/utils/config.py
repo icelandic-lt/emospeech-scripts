@@ -28,6 +28,7 @@ class AudioConfig:
         subtype: Soundfile subtype for saving
         input_device: Input device index or None for default
         output_device: Output device index or None for default
+        sync_response_time_ms: Audio sync response time in milliseconds
     """
     sample_rate: int = AudioConstants.DEFAULT_SAMPLE_RATE
     channels: int = AudioConstants.DEFAULT_CHANNELS
@@ -36,6 +37,7 @@ class AudioConfig:
     subtype: str = FileConstants.PCM_16_SUBTYPE
     input_device: Optional[int] = None
     output_device: Optional[int] = None
+    sync_response_time_ms: float = 10.0  # Default 10ms response time
 
 
     def __post_init__(self):
@@ -167,7 +169,8 @@ class RecorderConfig:
                 'dtype': self.audio.dtype,
                 'subtype': self.audio.subtype,
                 'input_device': self.audio.input_device,
-                'output_device': self.audio.output_device
+                'output_device': self.audio.output_device,
+                'sync_response_time_ms': self.audio.sync_response_time_ms
             },
             'display': {
                 'show_spectrogram': self.display.show_spectrogram,
