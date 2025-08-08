@@ -1,11 +1,10 @@
 """Handler for live recording functionality."""
 
-import queue
 import numpy as np
 from typing import List
 
 from ...constants import AudioConstants, UIConstants
-from ...audio.processor import MelSpectrogramProcessor, ClippingDetector
+from ...audio.processors import MelSpectrogramProcessor, ClippingDetector
 from ...utils.audio_utils import ensure_mono_normalized
 from .controllers import ClippingVisualizer
 
@@ -49,8 +48,6 @@ class RecordingHandler:
         self.audio_buffer = np.zeros(self.buffer_size)
         self.buffer_position = 0
 
-        # Thread-safe queue for audio data
-        self.audio_queue = queue.Queue(maxsize=100)
 
         # Recording state
         self.is_recording = False
@@ -79,11 +76,24 @@ class RecordingHandler:
         if value != self._spec_frames:
             self._spec_frames = value
 
+    def configure_for_sample_rate(self, sample_rate: int) -> None:
+        """Configure the handler for a new sample rate.
+
+        Args:
+            sample_rate: The new sample rate
+        """
+        self.sample_rate = sample_rate
+        self.frames_per_second = sample_rate / AudioConstants.HOP_LENGTH
+        self.buffer_size = int(UIConstants.SPECTROGRAM_DISPLAY_SECONDS * sample_rate)
+        self.audio_buffer = np.zeros(self.buffer_size)
+        self.buffer_position = 0
+
     def start_recording(self) -> None:
         """Start recording mode."""
         self.is_recording = True
         self.frame_count = 0
         self.update_counter = 0
+        # Always reset clipping markers at start of live mode
         self.clipping_visualizer.clear()
         self.max_detected_freq = 0.0
         self.all_spec_frames = []
@@ -91,14 +101,6 @@ class RecordingHandler:
         # Clear audio buffer
         self.audio_buffer.fill(0)
         self.buffer_position = 0
-
-        # Clear the audio queue
-        while not self.audio_queue.empty():
-            try:
-                self.audio_queue.get_nowait()
-            except queue.Empty:
-                break
-
 
     def stop_recording(self) -> None:
         """Stop recording mode."""

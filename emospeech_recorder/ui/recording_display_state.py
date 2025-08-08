@@ -2,7 +2,7 @@
 
 from typing import Optional
 from dataclasses import dataclass
-from ..audio.processor import MelSpectrogramProcessor
+from ..audio.processors import MelSpectrogramProcessor
 
 
 @dataclass

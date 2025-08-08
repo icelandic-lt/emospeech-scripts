@@ -32,11 +32,22 @@ class AudioConstants:
     DB_MAX = 0    # Maximum possible dB value
     DB_REFERENCE = 1e-10  # Reference for dB calculation
 
+    # dB conversion factors
+    AMPLITUDE_TO_DB_FACTOR = 20.0  # Factor for converting amplitude to dB (20 * log10)
+    POWER_TO_DB_FACTOR = 10.0  # Factor for converting power to dB (10 * log10)
+    NOISE_FLOOR = 1e-10  # Noise floor for dB calculations to avoid log(0)
+
+    # Level meter constants
+    MIN_DB_LEVEL = -60.0  # Minimum dB level for peak hold
+    MS_TO_SEC = 1000.0  # Milliseconds to seconds conversion factor
+
     # Processing
     CLIPPING_THRESHOLD = 0.99  # 99% of maximum value
     AUDIO_CHUNK_SIZE = 1024
     MIN_CLIPPING_MARKER_DISTANCE = 5  # Frames between markers
     FREQUENCY_NOISE_FLOOR_DB = -50  # dB threshold for max frequency detection (-60 = more sensitive, -40 = less sensitive)
+    # Threshold above dB min to consider a mel bin as having signal energy for max-frequency detection
+    MAX_FREQ_ENERGY_THRESHOLD_DB = 20
 
     # Normalization factors
     NORM_FACTOR_16BIT = 32768.0  # 2^15
@@ -56,6 +67,7 @@ class UIConstants:
     COLOR_TEXT_INACTIVE = 'gray'
     COLOR_CLIPPING = 'red'
     COLOR_PLAYBACK_LINE = 'red'
+    COLOR_EDGE_INDICATOR = 'lime'
 
     # Clipping display
     CLIPPING_LINE_WIDTH = 3
@@ -67,6 +79,18 @@ class UIConstants:
     # Playback display
     PLAYBACK_LINE_WIDTH = 2
     PLAYBACK_LINE_ALPHA = 0.8
+    PLAYBACK_UPDATE_MS = 10
+    PLAYBACK_INITIAL_CHECK_MS = 50
+    PLAYBACK_IDLE_RETRY_MS = 20
+    PLAYBACK_WATCHDOG_NEAR_END_RATIO = 0.95
+    PLAYBACK_WATCHDOG_STALL_MS = 200
+    PLAYBACK_FADEOUT_MS = 200
+    PLAYBACK_FADEOUT_STEPS = 8
+
+    # Edge indicator display
+    EDGE_INDICATOR_WIDTH = 2
+    EDGE_INDICATOR_ALPHA = 0.8
+    EDGE_INDICATOR_TIMEOUT_MS = 350
 
     # Timing (milliseconds)
     ANIMATION_UPDATE_MS = 20
@@ -105,11 +129,26 @@ class UIConstants:
     SPECTROGRAM_DPI = 100
     SPECTROGRAM_DISPLAY_SECONDS = 3.0
 
+    # Layout calculations
+    ADAPTIVE_MARGIN_MIN_WIDTH_INCHES = 6.0  # Width below which we use maximum margin
+    ADAPTIVE_MARGIN_MAX_WIDTH_INCHES = 16.0  # Width above which we use minimum margin
+    ADAPTIVE_MARGIN_MIN = 0.04  # Minimum left margin for wide windows
+    ADAPTIVE_MARGIN_MAX = 0.10  # Maximum left margin for narrow windows
+    SUBPLOT_MARGIN_RIGHT = 0.98  # Right margin for subplots
+    SUBPLOT_MARGIN_TOP = 0.95  # Top margin for subplots
+    SUBPLOT_MARGIN_BOTTOM = 0.08  # Bottom margin for subplots
+
+    # Display tolerances
+    FIGURE_SIZE_CHANGE_THRESHOLD = 0.1  # Minimum change in inches to trigger resize
+    DPI_CHANGE_THRESHOLD = 5  # Minimum DPI change to trigger update
+
     # Axis settings
     AXIS_LABEL_FONTSIZE = 8
     AXIS_TICK_FONTSIZE = 6
     N_TIME_TICKS = 7
     N_FREQUENCY_TICKS = 8  # More ticks for better logarithmic display
+    # Fraction of frequency ticks allocated to the lower third of the spectrum
+    FREQ_TICKS_LOWER_FRACTION = 0.6
 
 
 class FileConstants:
@@ -143,6 +182,8 @@ class KeyBindings:
     BROWSE_TAKES_LEFT = 'Left'
     BROWSE_TAKES_RIGHT = 'Right'
     TOGGLE_SPECTROGRAM = ['m', 'M']
+    TOGGLE_LEVEL_METER = ['l', 'L']
+    TOGGLE_MONITORING = 'o'
     DELETE_RECORDING = 'd'
     QUIT = 'q'
     TOGGLE_FULLSCREEN = 'F10'

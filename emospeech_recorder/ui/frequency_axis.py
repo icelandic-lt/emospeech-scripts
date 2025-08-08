@@ -6,7 +6,7 @@ import librosa
 from matplotlib.axes import Axes
 
 from ..constants import UIConstants
-from ..audio.processor import MelSpectrogramProcessor
+from ..audio.mel_factory import MelProcessorFactory
 
 
 class FrequencyAxisManager:
@@ -56,15 +56,9 @@ class FrequencyAxisManager:
         # Reset peak indicator when updating axis
         self._peak_indicator_position = None
 
-        # Calculate adaptive parameters
-        nyquist_freq = sample_rate / 2
-        adaptive_fmax = nyquist_freq
-
-        # Calculate adaptive mel bins
-        freq_range = adaptive_fmax - fmin
-        base_range = 24000 - 50  # Original range for 48kHz
-        mel_scale_factor = freq_range / base_range
-        adaptive_n_mels = max(80, int(96 * mel_scale_factor))
+        params = MelProcessorFactory.calculate_adaptive_params(sample_rate, fmin)
+        adaptive_n_mels = params['n_mels']
+        adaptive_fmax = params['fmax']
 
         # Update axis
         mel_freqs = self._get_mel_frequencies(adaptive_n_mels, fmin, adaptive_fmax)
@@ -146,7 +140,8 @@ class FrequencyAxisManager:
                     self.ax.get_yticklabels()[i].set_weight('bold')
                     break
 
-    def _get_mel_frequencies(self, n_mels: int, fmin: float, fmax: float) -> np.ndarray:
+    @staticmethod
+    def _get_mel_frequencies(n_mels: int, fmin: float, fmax: float) -> np.ndarray:
         """Get mel frequency values for each bin."""
         return librosa.mel_frequencies(
             n_mels=n_mels + 2,
@@ -161,7 +156,7 @@ class FrequencyAxisManager:
         n_ticks = UIConstants.N_FREQUENCY_TICKS
 
         # Split ticks: more in lower frequencies
-        lower_ticks = int(n_ticks * 0.6)
+        lower_ticks = int(n_ticks * UIConstants.FREQ_TICKS_LOWER_FRACTION)
         upper_ticks = n_ticks - lower_ticks
 
         # Calculate indices
@@ -183,7 +178,8 @@ class FrequencyAxisManager:
 
         return log_indices, labels
 
-    def _format_frequency(self, freq: float) -> str:
+    @staticmethod
+    def _format_frequency(freq: float) -> str:
         """Format frequency value for display."""
         if freq < 1000:
             return f'{int(freq)}'

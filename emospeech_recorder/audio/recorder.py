@@ -15,6 +15,7 @@ import traceback
 import soundfile as sf
 
 from .shared_state import SharedState, SHARED_STATUS_INVALID
+from .level_calculator import LevelCalculator
 from ..utils.config import AudioConfig
 from ..utils.audio_utils import calculate_blocksize
 
@@ -44,6 +45,9 @@ class AudioRecorder:
         self.stream: Optional[sd.InputStream] = None
         self.current_position = 0
 
+        # Level calculator for meter updates
+        self.level_calculator = LevelCalculator(config.sample_rate)
+
         # Calculate blocksize from response time setting
         self.blocksize = calculate_blocksize(
             config.sync_response_time_ms,
@@ -71,8 +75,9 @@ class AudioRecorder:
 
         # Update config if settings changed
         if sample_rate != self.config.sample_rate:
-            print(f"Recording: Updating sample rate from {self.config.sample_rate} to {sample_rate}")
             self.config.sample_rate = sample_rate
+            # Update level calculator
+            self.level_calculator.update_sample_rate(sample_rate)
             # Recalculate blocksize
             self.blocksize = calculate_blocksize(
                 self.config.sync_response_time_ms,
@@ -98,7 +103,6 @@ class AudioRecorder:
         )
 
         self.stream.start()
-        print(f"Started recording: {sample_rate}Hz, blocksize={self.blocksize}")
 
     def stop_recording(self) -> np.ndarray:
         """Stop recording and return audio data."""
@@ -158,8 +162,6 @@ class AudioRecorder:
             time_info: Hardware timing information
             status: Callback status flags
         """
-        if status:
-            print(f"Recording callback status: {status}")
 
         if self.is_recording:
             # Store audio chunk
@@ -169,6 +171,17 @@ class AudioRecorder:
             self.shared_state.update_recording_position(
                 self.current_position,
                 time_info.inputBufferAdcTime
+            )
+
+            # Calculate and update level meter
+            rms_db, peak_db, peak_hold_db = self.level_calculator.process(
+                indata, self.config.channels
+            )
+            self.shared_state.update_level_meter(
+                rms_db=rms_db,
+                peak_db=peak_db,
+                peak_hold_db=peak_hold_db,
+                frame_count=self.level_calculator.get_frame_count()
             )
 
             # Send to visualization queue if active
@@ -195,7 +208,8 @@ def record_process(config: AudioConfig,
                    audio_queue: mp.Queue,
                    shared_state_name: str,
                    control_queue: mp.Queue,
-                   manager_dict: dict) -> None:
+                   manager_dict: dict,
+                   shutdown_event: mp.Event) -> None:
     """Process function for audio recording with hardware synchronization.
 
     Args:
@@ -215,25 +229,36 @@ def record_process(config: AudioConfig,
             try:
                 command = control_queue.get(timeout=0.1)
 
-                if command == 'start':
+                # Only accept dictionary commands for consistency
+                if not isinstance(command, dict):
+                    print(f"Warning: Received non-dictionary command: {command}")
+                    continue
+
+                action = command.get('action')
+
+                if action == 'start':
                     recorder.start_recording()
 
-                elif command == 'stop':
+                elif action == 'stop':
                     audio_data = recorder.stop_recording()
 
                     # Get save path from old shared state (for compatibility)
                     save_path = manager_dict.get('save_path')
                     if save_path and len(audio_data) > 0:
                         recorder.save_recording(audio_data, Path(save_path))
-                        print(f"Recording saved to {save_path}")
 
                     # Clear save path
                     manager_dict['save_path'] = None
 
-                elif command == 'quit':
+                elif action == 'quit':
                     break
 
+                else:
+                    print(f"Warning: Unsupported action: {action}")
+
             except queue.Empty:
+                if shutdown_event.is_set():
+                    break
                 continue
             except KeyboardInterrupt:
                 break

@@ -22,10 +22,18 @@ class UserSettings:
     # Display settings
     show_spectrogram: bool = True
     show_info_overlay: bool = False
+    show_level_meter: bool = False
     fullscreen: bool = False
 
     # Window settings
     window_geometry: Optional[str] = None
+
+    # Level meter settings
+    level_meter_preset: str = "broadcast_ebu"
+    level_meter_custom_target_min: float = -18.0
+    level_meter_custom_target_max: float = -12.0
+    level_meter_custom_warning: float = -6.0
+    level_meter_custom_danger: float = -3.0
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert settings to dictionary."""

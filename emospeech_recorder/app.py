@@ -1,9 +1,14 @@
 """Main application for the EmoSpeech Recorder."""
 
+# Set matplotlib backend before any matplotlib imports
+import matplotlib
+matplotlib.use('TkAgg')
+
 import argparse
 import sys
 import platform
 import time
+import os
 import multiprocessing as mp
 import queue
 import threading
@@ -73,6 +78,11 @@ class EmoSpeechRecorder:
         # Initialize state
         self.state = AppState()
 
+        # Monitoring state
+        self.is_monitoring = False
+        self.saved_spectrogram_state = None
+        self.saved_level_meter_state = None
+
         # Initialize file managers
         self.file_manager = RecordingFileManager(recording_dir)
         self.script_manager = ScriptFileManager()
@@ -88,6 +98,12 @@ class EmoSpeechRecorder:
 
         # Initialize UI
         self._init_ui()
+        # Expose quit callback to UI menu if needed
+        if hasattr(self, 'window') and hasattr(self.window, 'app_callbacks'):
+            try:
+                self.window.app_callbacks['quit'] = self._quit
+            except Exception:
+                pass
 
         # Bind keyboard shortcuts
         self._bind_keys()
@@ -130,6 +146,8 @@ class EmoSpeechRecorder:
         # Create manager for shared state
         self.manager = mp.Manager()
         self.manager_dict = self.manager.dict()
+        # Shutdown event to coordinate clean exit across processes/threads
+        self.shutdown_event = mp.Event()
 
         # Create buffer manager for shared memory lifecycle
         self.buffer_manager = BufferManager(max_buffers=5)
@@ -202,11 +220,22 @@ class EmoSpeechRecorder:
         self.root = tk.Tk(className='EmoSpeech Recorder')
         self.root.title("EmoSpeech Recorder")
 
+        # macOS: Route the standard application "Quit" (CMD+Q) to our central _quit()
+        if platform.system() == 'Darwin':
+            try:
+                # Override the Cocoa default quit command used by Tk
+                self.root.createcommand('tk::mac::Quit', self._quit)
+            except Exception:
+                pass
+
         # Create callbacks for menu actions
         app_callbacks = {
             'toggle_mel_spectrogram': self._toggle_mel_spectrogram,
+            'toggle_level_meter': self._toggle_level_meter,
+            'toggle_monitoring': self._toggle_monitoring,
             'update_audio_settings': self._update_audio_settings,
-            'update_info_overlay': self._update_info_overlay
+            'update_info_overlay': self._update_info_overlay,
+            'quit': self._quit
         }
 
         self.window = MainWindow(
@@ -222,12 +251,8 @@ class EmoSpeechRecorder:
 
         # Start audio queue processing (widget is always created now)
         if hasattr(self.window, 'mel_spectrogram') and self.window.mel_spectrogram is not None:
-            self._start_audio_queue_processing()
-        else:
-            print("Warning: Mel spectrogram widget not found")
-            print(f"Has mel_spectrogram attr: {hasattr(self.window, 'mel_spectrogram')}")
-            if hasattr(self.window, 'mel_spectrogram'):
-                print(f"mel_spectrogram value: {self.window.mel_spectrogram}")
+            # Delay a bit to ensure Manager server is fully up before background thread accesses it
+            self.root.after(50, self._start_audio_queue_processing)
 
     def _bind_keys(self) -> None:
         """Bind keyboard shortcuts."""
@@ -240,6 +265,10 @@ class EmoSpeechRecorder:
         # Toggle spectrogram can be 'm' or 'M'
         for key in KeyBindings.TOGGLE_SPECTROGRAM:
             self.root.bind(f'<{key}>', lambda e: self._toggle_mel_spectrogram())
+        # Toggle level meter can be 'l' or 'L'
+        for key in KeyBindings.TOGGLE_LEVEL_METER:
+            self.root.bind(f'<{key}>', lambda e: self._toggle_level_meter())
+        self.root.bind(f'<{KeyBindings.TOGGLE_MONITORING}>', lambda e: self._toggle_monitoring())
         self.root.bind(f'<{KeyBindings.DELETE_RECORDING}>', lambda e: self._delete_current_recording())
         self.root.bind(f'<{KeyBindings.QUIT}>', lambda e: self._quit())
         self.root.bind(f'<{KeyBindings.TOGGLE_FULLSCREEN}>', lambda e: self.window.toggle_fullscreen())
@@ -248,6 +277,12 @@ class EmoSpeechRecorder:
 
         # Window close event
         self.root.protocol("WM_DELETE_WINDOW", self._quit)
+        # macOS Command+Q should quit like 'q'
+        try:
+            self.root.bind_all('<Command-q>', lambda e: self._quit())
+            self.root.bind_all('<Command-Q>', lambda e: self._quit())
+        except Exception:
+            pass
 
     def _start_processes(self) -> None:
         """Start background processes."""
@@ -255,16 +290,17 @@ class EmoSpeechRecorder:
         self.record_process = mp.Process(
             target=record_process,
             args=(self.config.audio, self.audio_queue, self.shared_state.name,
-                  self.record_queue, self.manager_dict)
+                  self.record_queue, self.manager_dict, self.shutdown_event)
         )
         self.record_process.start()
 
         # Playback process with hw synchronization
         self.playback_process = mp.Process(
             target=playback_process,
-            args=(self.config.audio, self.playback_queue, self.shared_state.name)
+            args=(self.config.audio, self.playback_queue, self.shared_state.name, self.shutdown_event)
         )
         self.playback_process.start()
+
 
     def _start_audio_queue_processing(self) -> None:
         """Start processing audio queue for real-time display."""
@@ -272,25 +308,37 @@ class EmoSpeechRecorder:
 
         # Start a transfer thread
         def audio_transfer_thread():
-            while self.manager_dict.get('audio_queue_active', False):
-                try:
-                    audio_data = self.audio_queue.get(timeout=0.1)
+            try:
+                while True:
+                    # Check active flag with guard; manager may already be gone
+                    try:
+                        active = self.manager_dict.get('audio_queue_active', False)
+                    except Exception:
+                        break
+                    if not active:
+                        break
 
-                    # Update mel spectrogram if visible
-                    if hasattr(self.window, 'mel_spectrogram') and self.window.ui_state.spectrogram_visible:
-                        # Use after() to update in main thread
-                        self.root.after(0, lambda data=audio_data: self.window.mel_spectrogram.update_audio(data))
-                except queue.Empty:
-                    # Timeout is normal, just continue
-                    pass
-                except EOFError:
-                    # Queue was closed, exit cleanly
-                    print("Audio queue closed, exiting transfer thread")
-                    break
-                except Exception as e:
-                    if "closed" not in str(e).lower():
-                        print(f"Error in audio transfer thread: {e}")
-                    break
+                    try:
+                        audio_data = self.audio_queue.get(timeout=0.1)
+
+                        # Update mel spectrogram if visible
+                        if hasattr(self.window, 'mel_spectrogram') and self.window.ui_state.spectrogram_visible:
+                            # Use after() to update in main thread
+                            self.root.after(0, lambda data=audio_data: self.window.mel_spectrogram.update_audio(data))
+
+                    except queue.Empty:
+                        # Timeout is normal, just continue
+                        pass
+                    except EOFError:
+                        # Queue was closed, exit cleanly
+                        break
+                    except Exception as e:
+                        if "closed" not in str(e).lower():
+                            print(f"Error in audio transfer thread: {e}")
+                        break
+            except (BrokenPipeError, OSError, EOFError):
+                # IPC endpoints closed during shutdown; exit quietly
+                pass
 
         self.transfer_thread = threading.Thread(target=audio_transfer_thread)
         self.transfer_thread.daemon = True
@@ -304,72 +352,161 @@ class EmoSpeechRecorder:
         else:
             self._start_recording()
 
-    def _start_recording(self) -> None:
-        """Start recording."""
-        # Stop any playback
-        self._stop_synchronized_playback()
+    def _start_audio_capture(self, mode: str) -> None:
+        """Start audio capture in recording or monitoring mode.
 
-        # Update state
-        self.state.recording.is_recording = True
-        current_label = self.state.recording.current_label
+        Args:
+            mode: Must be either 'recording' or 'monitoring'
+        """
+        if mode not in ('recording', 'monitoring'):
+            raise ValueError(f"Invalid mode: {mode}. Must be 'recording' or 'monitoring'")
 
-        if not current_label:
-            return
+        is_recording = (mode == 'recording')
 
-        # Increment take number
-        take_num = self.state.recording.increment_take(current_label)
+        # Stop any active monitoring or playback
+        if self.is_monitoring:
+            self._stop_monitoring_mode()
+        if is_recording:
+            self._stop_synchronized_playback()
 
-        # Set save path
-        save_path = self.file_manager.get_recording_path(current_label, take_num)
-        self.manager_dict['save_path'] = str(save_path)
+        # Recording-specific setup
+        if is_recording:
+            # Update state
+            self.state.recording.is_recording = True
+            current_label = self.state.recording.current_label
 
-        # Clear and start spectrogram recording
+            if not current_label:
+                return
+
+            # Increment take number and set save path
+            take_num = self.state.recording.increment_take(current_label)
+            save_path = self.file_manager.get_recording_path(current_label, take_num)
+            self.manager_dict['save_path'] = str(save_path)
+        else:
+            # Monitoring-specific setup
+            self.is_monitoring = True
+            # Save current UI state
+            self.saved_spectrogram_state = self.state.ui.spectrogram_visible
+            self.saved_level_meter_state = self.window.level_meter_var.get() if hasattr(self.window, 'level_meter_var') else False
+
+            # Show both visualizations
+            if not self.state.ui.spectrogram_visible:
+                self._toggle_mel_spectrogram()
+            if hasattr(self.window, 'level_meter_var') and not self.window.level_meter_var.get():
+                self.window._toggle_level_meter_callback()
+                self.settings_manager.update_setting('show_level_meter', True)
+                self.root.update_idletasks()
+
+            # Reset level meter when entering monitoring mode
+            if hasattr(self.window, 'embedded_level_meter') and self.window.embedded_level_meter:
+                try:
+                    self.window.embedded_level_meter.reset()
+                except Exception:
+                    pass
+
+        # Clear and start spectrogram
         if hasattr(self.window, 'mel_spectrogram'):
             self.window.mel_spectrogram.clear()
             self.window.mel_spectrogram.start_recording(self.config.audio.sample_rate)
 
-        # Update info overlay if visible to show recording parameters
+        # Update info overlay
         if self.window.info_overlay.visible:
             recording_params = {
                 'sample_rate': self.config.audio.sample_rate,
                 'bit_depth': self.config.audio.bit_depth,
                 'channels': self.config.audio.channels
             }
-            self.window.info_overlay.show(is_recording=True, recording_params=recording_params)
+            self.window.info_overlay.show(
+                recording_params,
+                is_recording=True,
+                is_monitoring=(mode == 'monitoring')
+            )
 
-        # Start recording
-        self.record_queue.put('start')
-        self._update_display()
+        # Start audio capture
+        self.record_queue.put({'action': 'start'})
 
-    def _stop_recording(self) -> None:
-        """Stop recording."""
-        # Update state
-        self.state.recording.is_recording = False
+        # Update UI
+        if is_recording:
+            self._update_display()
+        else:
+            self.window.set_status("Monitoring input levels...")
+            if hasattr(self.window, 'monitoring_var'):
+                self.window.monitoring_var.set(True)
 
-        # Stop recording
-        self.record_queue.put('stop')
+    def _start_recording(self) -> None:
+        """Start recording."""
+        self._start_audio_capture('recording')
 
-        # Stop spectrogram
+    def _stop_audio_capture(self, mode: str) -> None:
+        """Stop audio capture in recording or monitoring mode.
+
+        Args:
+            mode: Must be either 'recording' or 'monitoring'
+        """
+        if mode not in ('recording', 'monitoring'):
+            raise ValueError(f"Invalid mode: {mode}. Must be 'recording' or 'monitoring'")
+
+        is_recording = (mode == 'recording')
+
+        # Stop audio capture & spectrogram
+        self.record_queue.put({'action': 'stop'})
         if hasattr(self.window, 'mel_spectrogram'):
             self.window.mel_spectrogram.stop_recording()
 
-        # Update displayed take
-        current_label = self.state.recording.current_label
-        if current_label:
-            current_take = self.state.recording.get_take_count(current_label)
-            self.state.recording.set_displayed_take(current_label, current_take)
+        # Recording-specific cleanup
+        if is_recording:
+            # Update state
+            self.state.recording.is_recording = False
 
-            # Wait a bit for the file to be saved by the recording process
-            # then load and display the recording
-            self.root.after(UIConstants.POST_RECORDING_DELAY_MS, self._show_saved_recording)
+            # Update displayed take
+            current_label = self.state.recording.current_label
+            if current_label:
+                current_take = self.state.recording.get_take_count(current_label)
+                self.state.recording.set_displayed_take(current_label, current_take)
 
-        # Update display
-        self._update_display()
+                # Wait a bit for the file to be saved by the recording process
+                # then load and display the recording
+                self.root.after(UIConstants.POST_RECORDING_DELAY_MS, self._show_saved_recording)
 
-        # Update info overlay if visible to show the new recording
-        if self.window.info_overlay.visible:
-            # Wait a bit for the file to be saved
-            self.root.after(UIConstants.POST_RECORDING_DELAY_MS, self._update_info_overlay)
+            # Update display
+            self._update_display()
+
+            # Update info overlay if visible to show the new recording
+            if self.window.info_overlay.visible:
+                # Wait a bit for the file to be saved
+                self.root.after(UIConstants.POST_RECORDING_DELAY_MS, self._update_info_overlay)
+        else:
+            # Monitoring-specific cleanup
+            self.is_monitoring = False
+
+            # Restore UI state
+            if self.saved_spectrogram_state is not None and self.saved_spectrogram_state != self.state.ui.spectrogram_visible:
+                self._toggle_mel_spectrogram()
+
+            if hasattr(self.window, 'level_meter_var') and self.saved_level_meter_state is not None:
+                current_state = self.window.level_meter_var.get()
+                if self.saved_level_meter_state != current_state:
+                    self.window._toggle_level_meter_callback()
+
+            # Clear saved states
+            self.saved_spectrogram_state = None
+            self.saved_level_meter_state = None
+
+            # Update UI
+            self.window.set_status("Ready")
+            if hasattr(self.window, 'monitoring_var'):
+                self.window.monitoring_var.set(False)
+
+            # Show previous recording if one exists
+            self._show_saved_recording()
+
+            # Update info overlay if visible to show the current recording
+            if self.window.info_overlay.visible:
+                self._update_info_overlay()
+
+    def _stop_recording(self) -> None:
+        """Stop recording."""
+        self._stop_audio_capture('recording')
 
     def _play_current(self) -> None:
         """Play current recording."""
@@ -377,14 +514,29 @@ class EmoSpeechRecorder:
             self.window.show_message("No recording available")
             return
 
+        # Stop monitoring if active
+        if self.is_monitoring:
+            self._stop_monitoring_mode()
+
         # Stop playback exactly like Left/Right keys do
         sd.stop()  # Immediate stop in main process
         self._stop_synchronized_playback()
         if hasattr(self.window, 'mel_spectrogram'):
             self.window.mel_spectrogram.stop_playback()
 
+        # Reset meter via shared state before starting a new playback
+        try:
+            self.shared_state.reset_level_meter()
+        except Exception:
+            pass
+
         # Give the playback process time to handle the stop command
         time.sleep(UIConstants.PLAYBACK_STOP_DELAY)  # Small delay to ensure stop is processed
+        # Also clear playback status to IDLE
+        try:
+            self.shared_state.stop_playback()
+        except Exception:
+            pass
 
         current_label = self.state.recording.current_label
         current_take = self.state.recording.get_current_take(current_label)
@@ -395,6 +547,13 @@ class EmoSpeechRecorder:
             # Load audio
             audio_data, sr = self.file_manager.load_audio(filepath)
             duration = len(audio_data) / sr
+
+            # Reset meter when starting playback of a file
+            if hasattr(self.window, 'embedded_level_meter') and self.window.embedded_level_meter:
+                try:
+                    self.window.embedded_level_meter.reset()
+                except Exception:
+                    pass
 
             # Create shared audio buffer using buffer manager
             audio_buffer = self.buffer_manager.create_buffer(audio_data)
@@ -413,6 +572,12 @@ class EmoSpeechRecorder:
             if hasattr(self.window, 'mel_spectrogram'):
                 self.window.mel_spectrogram.start_playback(duration, sr)
 
+            # Update level meter for playback if visible
+            level_meter_visible = self.window.level_meter_var.get() if hasattr(self.window, 'level_meter_var') else False
+            if level_meter_visible:
+                # Schedule periodic updates during playback
+                self._start_playback_level_monitoring(filepath)
+
     def _navigate(self, direction: int) -> None:
         """Navigate to next/previous utterance."""
         # Stop any current activity
@@ -422,6 +587,12 @@ class EmoSpeechRecorder:
         self._stop_synchronized_playback()
         if hasattr(self.window, 'mel_spectrogram'):
             self.window.mel_spectrogram.stop_playback()
+
+        # Reset level meter via shared state to ensure producer/consumer sync
+        try:
+            self.shared_state.reset_level_meter()
+        except Exception:
+            pass
 
         # Update index
         new_index = self.state.recording.current_index + direction
@@ -476,6 +647,11 @@ class EmoSpeechRecorder:
         if 0 <= new_index < len(existing_takes):
             new_take = existing_takes[new_index]
             self.state.recording.set_displayed_take(current_label, new_take)
+            # Reset level meter via shared state when switching takes
+            try:
+                self.shared_state.reset_level_meter()
+            except Exception:
+                pass
             self._show_saved_recording()
             self._update_take_status()
 
@@ -518,8 +694,13 @@ class EmoSpeechRecorder:
         current_take = self.state.recording.get_current_take(current_label)
 
         if current_take == 0:
-            # No recording exists - clear the spectrogram
+            # No recording exists - clear the spectrogram and reset meter
             self.window.mel_spectrogram.clear()
+            if hasattr(self.window, 'embedded_level_meter') and self.window.embedded_level_meter:
+                try:
+                    self.window.embedded_level_meter.reset()
+                except Exception:
+                    pass
             return
 
         filepath = self.file_manager.get_recording_path(current_label, current_take)
@@ -527,6 +708,11 @@ class EmoSpeechRecorder:
         if filepath.exists():
             try:
                 audio_data, sr = self.file_manager.load_audio(filepath)
+                # Reset meter via shared state when switching to a new file
+                try:
+                    self.shared_state.reset_level_meter()
+                except Exception:
+                    pass
                 self.window.mel_spectrogram.show_recording(audio_data, sr)
             except Exception as e:
 
@@ -556,12 +742,43 @@ class EmoSpeechRecorder:
         if hasattr(self.window, 'mel_spectrogram_var'):
             self.window.mel_spectrogram_var.set(self.state.ui.spectrogram_visible)
 
+    def _toggle_level_meter(self) -> None:
+        """Toggle level meter visibility."""
+        # Toggle the embedded level meter in the main window
+        if hasattr(self.window, 'level_meter_var'):
+            # Toggle the checkbox, which will trigger the callback
+            current_state = self.window.level_meter_var.get()
+            self.window.level_meter_var.set(not current_state)
+            self.window._toggle_level_meter_callback()
+
+            # Update audio queue state - needed if either spectrogram or level meter is visible
+            self._update_audio_queue_state()
+            # Start audio queue processing if needed and not already running
+            show_meter = self.window.level_meter_var.get()
+            if show_meter and not self.manager_dict.get('audio_queue_active', False):
+                self._start_audio_queue_processing()
+
+    def _toggle_monitoring(self) -> None:
+        """Toggle monitoring mode - shows both level meter and mel spectrogram."""
+        if self.is_monitoring:
+            self._stop_monitoring_mode()
+        else:
+            self._start_monitoring_mode()
+
+
+    def _start_monitoring_mode(self) -> None:
+        """Start monitoring mode using record process without saving."""
+        self._start_audio_capture('monitoring')
+
+    def _stop_monitoring_mode(self) -> None:
+        """Stop monitoring mode - restore UI state."""
+        self._stop_audio_capture('monitoring')
+
     def _update_audio_queue_state(self) -> None:
         """Update audio queue state based on whether any visualizations need audio."""
         # Audio queue is needed if either spectrogram or level meter is visible
-        needs_audio = (self.state.ui.spectrogram_visible or
-                      (hasattr(self.window, 'level_meter_overlay') and
-                       self.window.level_meter_overlay.visible))
+        level_meter_visible = self.window.level_meter_var.get() if hasattr(self.window, 'level_meter_var') else False
+        needs_audio = self.state.ui.spectrogram_visible or level_meter_visible
 
         self.manager_dict['audio_queue_active'] = needs_audio
 
@@ -569,8 +786,13 @@ class EmoSpeechRecorder:
         """Show audio info overlay with current recording information."""
         current_label = self.state.recording.current_label
         if not current_label:
-            # No utterance selected
-            self.window.show_info_overlay(is_recording=self.state.recording.is_recording)
+            # No utterance selected - show current settings
+            recording_params = {
+                'sample_rate': self.config.audio.sample_rate,
+                'bit_depth': self.config.audio.bit_depth,
+                'channels': self.config.audio.channels
+            }
+            self.window.show_info_overlay(recording_params, self.state.recording.is_recording)
             # Save the setting
             self.settings_manager.update_setting('show_info_overlay', self.window.info_overlay.visible)
             return
@@ -582,18 +804,34 @@ class EmoSpeechRecorder:
                 'bit_depth': self.config.audio.bit_depth,
                 'channels': self.config.audio.channels
             }
-            self.window.show_info_overlay(is_recording=True, recording_params=recording_params)
+            self.window.show_info_overlay(recording_params, True)
         else:
-            # Not recording - show info for current take (the one that would play with P)
-            current_take = self.state.recording.get_current_take(current_label)
+            # Not recording - start with default settings
+            recording_params = {
+                'sample_rate': self.config.audio.sample_rate,
+                'bit_depth': self.config.audio.bit_depth,
+                'channels': self.config.audio.channels
+            }
 
+            # Try to get actual file info if a recording exists
+            current_take = self.state.recording.get_current_take(current_label)
             if current_take > 0:
-                # Get file path
                 filepath = self.file_manager.get_recording_path(current_label, current_take)
-                self.window.show_info_overlay(file_path=filepath, is_recording=False)
-            else:
-                # No recording for this utterance
-                self.window.show_info_overlay(is_recording=False)
+                if filepath.exists():
+                    file_info = self.file_manager.get_file_info(filepath)
+                    if file_info:
+                        sample_rate, bit_depth, format_name, channels, duration = file_info
+                        # Override with actual file parameters
+                        recording_params = {
+                            'sample_rate': sample_rate,
+                            'bit_depth': bit_depth,
+                            'format': format_name,
+                            'channels': channels,
+                            'duration': duration,
+                            'size': filepath.stat().st_size
+                        }
+
+            self.window.show_info_overlay(recording_params, False)
 
         # Save the setting after toggling
         self.settings_manager.update_setting('show_info_overlay', self.window.info_overlay.visible)
@@ -607,21 +845,39 @@ class EmoSpeechRecorder:
 
         This is called when navigating to update the overlay without toggling it.
         """
+        # Check if window is initialized
+        if not hasattr(self, 'window') or self.window is None:
+            return
+
         current_label = self.state.recording.current_label
         if not current_label:
             return
 
-        # Get current take that would play with P
-        current_take = self.state.recording.get_current_take(current_label)
+        recording_params = {
+            'sample_rate': self.config.audio.sample_rate,
+            'bit_depth': self.config.audio.bit_depth,
+            'channels': self.config.audio.channels
+        }
 
+
+        current_take = self.state.recording.get_current_take(current_label)
         if current_take > 0:
-            # Get file path
+            # Get recording parameters for file
             filepath = self.file_manager.get_recording_path(current_label, current_take)
-            # Update overlay without toggling visibility
-            self.window.info_overlay.show(file_path=filepath, is_recording=False)
-        else:
-            # No recording - update to show no recording
-            self.window.info_overlay.show(is_recording=False)
+            if filepath.exists():
+                file_info = self.file_manager.get_file_info(filepath)
+                if file_info:
+                    sample_rate, bit_depth, format_name, channels, duration = file_info
+                    recording_params = {
+                        'sample_rate': sample_rate,
+                        'bit_depth': bit_depth,
+                        'format': format_name,
+                        'channels': channels,
+                        'duration': duration,
+                        'size': filepath.stat().st_size
+                    }
+
+        self.window.info_overlay.show(recording_params, is_recording=False)
 
     def _update_audio_settings(self) -> None:
         """Handle audio settings changes.
@@ -643,9 +899,6 @@ class EmoSpeechRecorder:
             format_type=format_type
         )
 
-        # Log the update
-        print(f"Updated audio settings: {self.config.audio.sample_rate}Hz, "
-              f"{self.config.audio.bit_depth}-bit, {self.config.audio.channels} channel(s)")
 
     def _delete_current_recording(self) -> None:
         """Delete the current recording take."""
@@ -714,7 +967,13 @@ class EmoSpeechRecorder:
 
     def _stop_synchronized_playback(self) -> None:
         """Stop synchronized playback."""
-        self.playback_queue.put('stop')
+        self.playback_queue.put({'action': 'stop'})
+        # Also reset level meter when playback stops
+        if hasattr(self.window, 'embedded_level_meter') and self.window.embedded_level_meter:
+            try:
+                self.window.embedded_level_meter.reset()
+            except Exception:
+                pass
 
     def _start_playback_level_monitoring(self, filepath) -> None:
         """Start monitoring audio levels during playback.
@@ -739,8 +998,15 @@ class EmoSpeechRecorder:
         if self.state.recording.is_recording:
             self._stop_recording()
 
-        # Stop audio queue processing
-        self.manager_dict['audio_queue_active'] = False
+        # Stop monitoring if active
+        if self.is_monitoring:
+            self._stop_monitoring_mode()
+
+        # Stop audio queue processing (guard manager might be gone)
+        try:
+            self.manager_dict['audio_queue_active'] = False
+        except Exception:
+            pass
 
         # Stop any playback monitoring
         if hasattr(self, '_playback_monitor_active'):
@@ -748,16 +1014,34 @@ class EmoSpeechRecorder:
 
         # Clean up struct shared state
         if hasattr(self, 'shared_state'):
-            self.shared_state.close()
-            self.shared_state.unlink()
+            try:
+                self.shared_state.close()
+            except Exception:
+                pass
+            try:
+                self.shared_state.unlink()
+            except Exception:
+                pass
 
         # Wait for audio transfer thread to finish
         if hasattr(self, 'transfer_thread') and self.transfer_thread.is_alive():
             self.transfer_thread.join(timeout=0.5)
 
         # Stop processes
-        self.record_queue.put('quit')
-        self.playback_queue.put('quit')
+        try:
+            self.record_queue.put({'action': 'quit'}, block=False)
+        except Exception as e:
+            print(f"record_queue.put quit failed: {e}")
+        try:
+            self.playback_queue.put({'action': 'quit'}, block=False)
+        except Exception as e:
+            print(f"playback_queue.put quit failed: {e}")
+
+        # Signal shutdown to child loops that might be waiting on empty queues
+        try:
+            self.shutdown_event.set()
+        except Exception as e:
+            print(f"setting shutdown_event failed: {e}")
 
         # Wait for processes to finish
         self.record_process.join(timeout=2)
@@ -769,20 +1053,47 @@ class EmoSpeechRecorder:
         if self.playback_process.is_alive():
             self.playback_process.terminate()
 
+        # Attempt a final join
+        self.record_process.join(timeout=0.5)
+        self.playback_process.join(timeout=0.5)
+
+        # Force kill if absolutely necessary
+        try:
+            if self.record_process.is_alive() and hasattr(self.record_process, 'kill'):
+                self.record_process.kill()
+        except Exception as e:
+            print(f"kill record_process failed: {e}")
+        try:
+            if self.playback_process.is_alive() and hasattr(self.playback_process, 'kill'):
+                self.playback_process.kill()
+        except Exception as e:
+            print(f"kill playback_process failed: {e}")
+
         # Clean up all shared memory buffers after processes are done
         if hasattr(self, 'buffer_manager'):
             self.buffer_manager.cleanup_all(wait_time=0.15)
 
-        # Close UI
-        self.root.quit()
-        sys.exit(0)
+        # Close queues and manager
+        try:
+            self.record_queue.close()
+            self.playback_queue.close()
+        except Exception:
+            pass
+        try:
+            self.manager.shutdown()
+        except Exception:
+            pass
+
+        # Close UI and force-exit as last resort to avoid deadlocks
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+        os._exit(0)
 
     def run(self) -> None:
         """Run the application."""
-        # Focus window on startup
         self.window.focus_window()
-
-        # Start main loop
         self.root.mainloop()
 
 

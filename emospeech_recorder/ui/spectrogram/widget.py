@@ -5,17 +5,18 @@ import numpy as np
 import tkinter as tk
 import queue
 
+from matplotlib.image import AxesImage
+
 from ...constants import AudioConstants, UIConstants
-from ...audio.processor import ClippingDetector
+from ...audio.processors import ClippingDetector
 from ...audio.mel_factory import MelProcessorFactory
 from ...utils.config import AudioConfig, DisplayConfig
-from ..recording_display_state import RecordingDisplayState
 
 from .display_base import SpectrogramDisplayBase
 from .recording_handler import RecordingHandler
 from .playback_handler import PlaybackHandler
 from .recording_display import RecordingDisplay
-from .controllers import ZoomController, PlaybackController, ClippingVisualizer
+from .controllers import ZoomController, PlaybackController, ClippingVisualizer, EdgeIndicator
 
 
 class MelSpectrogramWidget(SpectrogramDisplayBase):
@@ -35,13 +36,13 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
     """
 
     # Constants for frequently used calculations
-    ZOOM_LEVELS = [1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0]
     BASE_FREQ_RANGE = 24000 - 50
     MIN_ADAPTIVE_MELS = 80
     BASE_MEL_BINS = 96
     ZOOM_INDICATOR_HIDE_DELAY_MS = 2000
     ZOOM_INDICATOR_FONTSIZE = 10
     FIGURE_PADDING = 20
+    MAX_CHUNKS_PER_UPDATE = 10  # Maximum audio chunks to process per display update
 
     def __init__(self, parent: tk.Widget, audio_config: AudioConfig,
                  display_config: DisplayConfig, manager_dict: dict = None,
@@ -57,14 +58,6 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
         super().__init__(parent, audio_config, display_config, manager_dict)
         self.shared_audio_state = shared_audio_state
 
-        # Debug flag for comparing processing
-        self._debug_processing_comparison = False
-
-        # Initialize recording-specific parameters
-        self._recording_n_mels = None
-        self._recording_sample_rate = None
-        self._recording_fmax = None
-        self.max_detected_freq = 0.0
 
         # Initialize mel processor
         self.mel_processor, self.adaptive_n_mels = MelProcessorFactory.create_for_sample_rate(
@@ -72,27 +65,20 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
             display_config.fmin
         )
 
-        # Print adaptive settings
-        params = MelProcessorFactory.calculate_adaptive_params(
-            audio_config.sample_rate,
-            display_config.fmin
-        )
-        print(f"Mel spectrogram frequency range:")
-        print(f"  Sample rate: {audio_config.sample_rate} Hz (Nyquist: {params['nyquist']:.0f} Hz)")
-        print(f"  Frequency range: {display_config.fmin} - {params['fmax']:.0f} Hz")
-        print(f"  Mel bins: {self.adaptive_n_mels} (scaled from {display_config.n_mels})")
+
+        # Initialize recording-specific parameters
+        self._recording_n_mels = self.adaptive_n_mels
+        self._recording_sample_rate = audio_config.sample_rate
+        self._recording_fmax = audio_config.sample_rate / 2
+        self.max_detected_freq = 0.0
 
         # Initialize processors
         self.clipping_detector = ClippingDetector(
             sample_rate=audio_config.sample_rate
         )
 
-        # Initialize display state
-        self.recording_state = RecordingDisplayState()
-
         # Initialize controllers
         self.zoom_controller = ZoomController()
-        self.zoom_controller.zoom_levels = self.ZOOM_LEVELS
         self.playback_controller = PlaybackController()
 
         # Initialize display
@@ -111,7 +97,6 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
             audio_config.sample_rate
         )
 
-        # Create playback handler with shared audio state
         self.playback_handler = PlaybackHandler(
             self.parent,
             self.ax,
@@ -131,14 +116,14 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
 
         # Set up callbacks
         self.playback_handler.on_update_display = self._update_spectrogram_view
-        self.playback_handler.on_update_time_axis = self._update_time_axis
+        self.playback_handler.on_update_time_axis = self._update_time_axis_labels
         self.playback_handler.on_draw_idle = self.draw_idle
 
         # Initialize state
         self._init_state()
 
-        # Create initial spectrogram image
-        self._create_spectrogram_image()
+        # Initialize spectrogram display
+        self._initialize_spectrogram_display()
 
         # Set up event bindings
         self._setup_event_bindings()
@@ -150,7 +135,11 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
     @property
     def all_spec_frames(self) -> List[np.ndarray]:
         """Get all recorded spec frames."""
-        return self._get_all_spec_frames()
+        # Return frames from the appropriate source
+        if self.recording_display.all_spec_frames:
+            return self.recording_display.all_spec_frames
+        else:
+            return self.recording_handler.all_spec_frames
 
     @property
     def is_recording(self) -> bool:
@@ -172,28 +161,36 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
         self.zoom_indicator = None
         self.current_time = 0
         self.recording_update_id = None
+        self._pan_active = False
+        self._pan_last_x = 0
+        self.edge_indicator: EdgeIndicator | None = None
 
-    def _create_spectrogram_image(self) -> None:
-        """Create the initial spectrogram image."""
+    @staticmethod
+    def _clear_queue(queue_to_clear: queue.Queue) -> None:
+        """Clear all items from a queue.
+
+        Args:
+            queue_to_clear: The queue to clear
+        """
+        while not queue_to_clear.empty():
+            try:
+                queue_to_clear.get_nowait()
+            except queue.Empty:
+                break
+
+    def _initialize_spectrogram_display(self) -> None:
+        """Initialize the spectrogram display with empty data and proper axis limits."""
         initial_data = np.ones((self.adaptive_n_mels, self.spec_frames)) * AudioConstants.DB_MIN
+        self.im = self._create_spectrogram_imshow(initial_data, self.adaptive_n_mels)
 
-        self.im = self.ax.imshow(
-            initial_data,
-            aspect='auto',
-            origin='lower',
-            cmap='viridis',
-            interpolation='bilinear',
-            vmin=AudioConstants.DB_MIN,
-            vmax=AudioConstants.DB_MAX
-        )
+        # Set axis limits to match extent
+        self.ax.set_xlim(0, self.spec_frames - 1)
+        self.ax.set_ylim(0, self.adaptive_n_mels - 1)
 
-        # Set initial axes
-        self.freq_axis_manager.update_default_axis(
-            self.adaptive_n_mels,
-            self.mel_processor.fmin,
-            self.mel_processor.actual_fmax
-        )
-        self._update_time_axis(0, UIConstants.SPECTROGRAM_DISPLAY_SECONDS)
+        # Prepare edge indicators
+        self._init_edge_indicator()
+        self.edge_indicator.ensure_created(self.spec_frames)
+        self.edge_indicator.update_positions(self.spec_frames)
 
     def _setup_event_bindings(self) -> None:
         """Set up mouse and keyboard event bindings."""
@@ -205,19 +202,67 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
         # Double-click to reset zoom
         self.canvas_widget.bind('<Double-Button-1>', self._reset_zoom)
 
+        # Middle mouse button drag for panning
+        self.canvas_widget.bind('<ButtonPress-2>', self._on_middle_press)
+        self.canvas_widget.bind('<B2-Motion>', self._on_middle_drag)
+        self.canvas_widget.bind('<ButtonRelease-2>', self._on_middle_release)
+        # Fallback: some platforms report middle as Button-3
+        self.canvas_widget.bind('<ButtonPress-3>', self._on_middle_press)
+        self.canvas_widget.bind('<B3-Motion>', self._on_middle_drag)
+        self.canvas_widget.bind('<ButtonRelease-3>', self._on_middle_release)
+
+    def _update_mel_processor_for_sample_rate(self, sample_rate: int) -> None:
+        """Update mel processor if sample rate has changed.
+
+        Args:
+            sample_rate: New sample rate
+        """
+        try:
+            # Recreate mel processor with new sample rate
+            new_mel_processor, new_adaptive_n_mels = MelProcessorFactory.create_for_sample_rate(
+                sample_rate,
+                self.display_config.fmin
+            )
+
+            # Update audio config
+            self.audio_config.sample_rate = sample_rate
+
+            # Update mel processor
+            self.mel_processor = new_mel_processor
+            self.adaptive_n_mels = new_adaptive_n_mels
+
+            # Update recording handler with new mel processor
+            self.recording_handler.mel_processor = new_mel_processor
+            self.recording_handler.n_mels = new_adaptive_n_mels
+
+            # Update recording-specific parameters
+            self._recording_n_mels = new_adaptive_n_mels
+            self._recording_sample_rate = sample_rate
+            self._recording_fmax = sample_rate / 2
+
+            # Update the display y-axis limits for new mel bin count
+            self.ax.set_ylim(0, new_adaptive_n_mels - 1)
+
+            # Reinitialize the spectrogram display with new dimensions
+            initial_data = np.ones((new_adaptive_n_mels, self.spec_frames)) * AudioConstants.DB_MIN
+            self._update_or_recreate_image(initial_data, new_adaptive_n_mels, force_recreate=True)
+
+        except Exception as e:
+            print(f"Error updating mel processor for sample rate {sample_rate}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
     # Recording methods
-    def _update_recording_display_buffer(self) -> None:
-        """Update the display buffer for recording mode using playback approach."""
+    def _update_recording_display(self) -> None:
+        """Update the display for recording mode using playback approach."""
         # Calculate how many frames represent 3 seconds
         frames_for_3_seconds = int(UIConstants.SPECTROGRAM_DISPLAY_SECONDS * self.frames_per_second)
-
-        # Get all recorded frames
         all_frames = self.recording_handler.all_spec_frames
-
         if not all_frames:
             # No frames yet - show empty display
             empty_data = np.ones((self.adaptive_n_mels, self.spec_frames)) * AudioConstants.DB_MIN
-            self.update_display_data(empty_data)
+            self.update_display_data(empty_data, self.adaptive_n_mels)
             return
 
         # Calculate which frames to show (last 3 seconds or all if less)
@@ -247,31 +292,31 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
             sample_rate: Sample rate for the recording
         """
         # Clear the audio queue first
-        while not self.audio_queue.empty():
-            try:
-                self.audio_queue.get_nowait()
-            except queue.Empty:
-                break
+        self._clear_queue(self.audio_queue)
 
-        # Update recording handler sample rate
-        self.recording_handler.sample_rate = sample_rate
-        self.recording_handler.frames_per_second = sample_rate / AudioConstants.HOP_LENGTH
-        self.recording_handler.buffer_size = int(UIConstants.SPECTROGRAM_DISPLAY_SECONDS * sample_rate)
-        self.recording_handler.audio_buffer = np.zeros(self.recording_handler.buffer_size)
-        self.recording_handler.buffer_position = 0
+        # Update mel processor if sample rate has changed
+        self._update_mel_processor_for_sample_rate(sample_rate)
 
-        # Also update widget's own frames_per_second
-        self.frames_per_second = sample_rate / AudioConstants.HOP_LENGTH
+        self.recording_handler.configure_for_sample_rate(sample_rate)
+        self.frames_per_second = self.recording_handler.frames_per_second
         self.time_per_frame = AudioConstants.HOP_LENGTH / sample_rate
 
-        # Start recording
-        self.recording_handler.start_recording()
+        # Set recording-specific parameters for live recording
+        # Calculate adaptive parameters based on the recording sample rate
 
-        # Initialize display
-        self._update_recording_display_buffer()
+        params = MelProcessorFactory.calculate_adaptive_params(sample_rate, self.display_config.fmin)
+        self._recording_sample_rate = sample_rate
+        self._recording_n_mels = params['n_mels']
+        self._recording_fmax = params['fmax']
+
+        self._update_frequency_axis(sample_rate)
+        # Defensive: ensure no old clipping markers leak into live monitor/recording
+        self.clipping_visualizer.clear()
+        self.recording_handler.start_recording()
+        self._update_recording_display()
 
         # Reset time axis - always show 3 seconds for recording
-        self._update_time_axis(0, UIConstants.SPECTROGRAM_DISPLAY_SECONDS)
+        self._update_time_axis_labels(0, UIConstants.SPECTROGRAM_DISPLAY_SECONDS)
 
         # Start periodic updates for recording
         self._start_recording_updates()
@@ -279,7 +324,6 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
     def stop_recording(self) -> None:
         """Stop recording animation."""
         self.recording_handler.stop_recording()
-
         # Stop periodic updates
         self._stop_recording_updates()
 
@@ -290,7 +334,6 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
             return
 
         try:
-            # Non-blocking put
             self.audio_queue.put_nowait(audio_chunk)
         except queue.Full:
             # Skip if queue is full
@@ -300,21 +343,19 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
         """Update display from audio queue."""
         # Process all pending audio chunks
         chunks_processed = 0
-        while not self.audio_queue.empty() and chunks_processed < 10:
+        while not self.audio_queue.empty() and chunks_processed < self.MAX_CHUNKS_PER_UPDATE:
             try:
                 audio_chunk = self.audio_queue.get_nowait()
                 should_update = self.recording_handler.update_audio(audio_chunk)
 
                 if should_update:
-                    # Update display
                     if self.recording_handler.is_recording:
-                        self._update_recording_display_buffer()
+                        self._update_recording_display()
 
                     # Update time tracking
                     self.current_time = self.recording_handler.current_time
                     self.max_detected_freq = self.recording_handler.max_detected_freq
 
-                    # Update clipping markers
                     self._update_clipping_markers_live()
 
                 chunks_processed += 1
@@ -322,7 +363,6 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
             except queue.Empty:
                 break
 
-        # Update frequency display
         if self.recording_handler.is_recording or self.playback_controller.is_playing:
             self._update_frequency_display()
 
@@ -338,7 +378,7 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
         """
         recording_duration = self.recording_display.recording_duration
         if recording_duration <= 0:
-            recording_duration = self.recording_handler.current_time
+            raise ValueError("Cannot start playback: No recording loaded (recording_duration <= 0)")
 
         self.playback_handler.start_playback(duration, recording_duration, sample_rate)
 
@@ -358,81 +398,75 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
         self._recording_n_mels = adaptive_n_mels
         self._recording_sample_rate = sample_rate
         self._recording_fmax = sample_rate / 2
-
-        # Check if we need to recreate the image due to shape change
-        current_shape = self.im.get_array().shape if self.im else None
-        if current_shape and (current_shape[0] != adaptive_n_mels or current_shape[1] != self.spec_frames):
-            # Remove old image
-            self.im.remove()
-            # Create new image with correct dimensions
-            self.im = self.ax.imshow(
-                display_data,
-                aspect='auto',
-                origin='lower',
-                cmap='viridis',
-                interpolation='bilinear',
-                vmin=AudioConstants.DB_MIN,
-                vmax=AudioConstants.DB_MAX,
-                extent=(0, self.spec_frames - 1, 0, adaptive_n_mels - 1)
-            )
-        else:
-            # Update existing image
-            self.update_display_data(display_data)
-            self.im.set_extent((0, self.spec_frames - 1, 0, adaptive_n_mels - 1))
-
-        # Update clipping markers
-        n_frames = len(self.recording_display.all_spec_frames)
-        self.clipping_visualizer.update_markers_for_display(n_frames, self.spec_frames)
-        self.clipping_visualizer.show_warning()
-
-        # Store max frequency for later
         self.max_detected_freq = self.recording_display.max_detected_freq
 
-        # Update frequency axis for recording
-        self._update_frequency_axis_for_recording(sample_rate)
+        if self.zoom_indicator:
+            self.zoom_indicator.set_visible(False)
 
-        # Update time axis
-        self._update_time_axis(0, duration)
+        self._finalize_recording_display(display_data, adaptive_n_mels, self.recording_display.recording_duration,
+                                         self._recording_sample_rate)
 
+    def _finalize_recording_display(self, display_data: np.ndarray, n_mels: int,
+                                    duration: float, sample_rate: int) -> None:
+        """Finalize the recording display with all UI updates.
+
+        This method handles all the display updates needed after loading or
+        refreshing the spectrogram after resize.
+
+        Args:
+            display_data: The spectrogram data to display
+            n_mels: Number of mel bins
+            duration: Recording duration in seconds
+            sample_rate: Sample rate of the recording
+        """
+        self._update_or_recreate_image(display_data, n_mels)
+
+        # Update clipping markers
+        self.clipping_visualizer.update_display(len(self.recording_display.all_spec_frames),
+                                                self.spec_frames)
+
+        self._update_frequency_axis(sample_rate)
         # IMPORTANT: Set y-axis limits AFTER frequency axis update
-        self.ax.set_ylim(0, adaptive_n_mels - 1)
-
+        self.ax.set_ylim(0, n_mels - 1)
         # Update frequency display (including max freq indicator) AFTER setting ylim
         self._update_frequency_display()
 
-        # Force correct layout with adaptive sizing
-        self._apply_adaptive_layout()
+        # Update time axis
         self.ax.set_xlim(0, self.spec_frames - 1)
+        self._apply_adaptive_layout()
+        self._update_time_axis_labels(0, duration)
+
         self.canvas.draw()
+
 
     def clear(self) -> None:
         """Clear the spectrogram display."""
         self.recording_handler.clear()
-        self.recording_display.all_spec_frames = []
-        self.recording_display.recording_duration = 0
+        self.recording_display.clear()
         self.zoom_controller.set_recording_duration(0)
-
-        self.recording_state.clear()
         self.clipping_visualizer.clear()
 
-        # Reset frequency axis
-        self._update_frequency_axis()
+        # Reset recording-specific parameters to defaults from current audio config
+        self._recording_sample_rate = self.audio_config.sample_rate
+        self._recording_n_mels = self.adaptive_n_mels
+        self._recording_fmax = self.audio_config.sample_rate / 2
+
+        # Reset frequency axis with default parameters
+        self.freq_axis_manager.update_default_axis(
+            self.adaptive_n_mels,
+            self.mel_processor.fmin,
+            self.mel_processor.actual_fmax
+        )
 
         # Reset display
         empty_data = np.ones((self.adaptive_n_mels, self.spec_frames)) * AudioConstants.DB_MIN
-        self.update_display_data(empty_data)
-        self.im.set_extent((0, self.spec_frames - 1, 0, self.adaptive_n_mels - 1))
+        self.update_display_data(empty_data, self.adaptive_n_mels)
 
         # Reset y-axis to default range
         self.ax.set_ylim(0, self.adaptive_n_mels - 1)
 
-        # Reset recording-specific parameters
-        if hasattr(self, '_recording_n_mels'):
-            delattr(self, '_recording_n_mels')
-        if hasattr(self, '_recording_sample_rate'):
-            delattr(self, '_recording_sample_rate')
-        if hasattr(self, '_recording_fmax'):
-            delattr(self, '_recording_fmax')
+        # Reset time axis to default 3 seconds
+        self._update_time_axis_labels(0, UIConstants.SPECTROGRAM_DISPLAY_SECONDS)
 
         self.draw_idle()
 
@@ -443,9 +477,8 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
         if mouse_rel_x is None:
             return
 
-        zoom_in = event.num == 4 or event.delta > 0
-
         current_time = self.recording_handler.current_time
+        zoom_in = event.num == 4 or event.delta > 0
         if self.zoom_controller.apply_zoom_at_position(mouse_rel_x, zoom_in, current_time):
             self._update_after_zoom()
 
@@ -456,9 +489,7 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
 
         ax_left = bbox.x0 * fig_width
         ax_width = bbox.width * fig_width
-
         mouse_rel_x = (event.x - ax_left) / ax_width
-
         if mouse_rel_x < 0 or mouse_rel_x > 1:
             return None
 
@@ -466,41 +497,87 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
 
     def _reset_zoom(self, event=None) -> None:
         """Reset zoom to 1x."""
-        _ = event  # Acknowledge parameter
         self.zoom_controller.reset()
 
-        # Update time axis
-        if self.recording_display.recording_duration > 0:
-            self._update_time_axis(0, self.recording_display.recording_duration)
-        else:
-            self._update_time_axis(0, UIConstants.SPECTROGRAM_DISPLAY_SECONDS)
-
-        # Hide zoom indicator
+        self._update_time_axis_for_current_state()
         if self.zoom_indicator:
             self.zoom_indicator.set_visible(False)
-
-        # Update display
         if self.recording_display.all_spec_frames:
             self._update_spectrogram_view()
 
         self.draw_idle()
 
+    # --- Middle-mouse panning ---
+    def _on_middle_press(self, event) -> None:
+        """Start panning with middle mouse button."""
+        self._pan_active = True
+        self._pan_last_x = event.x
+
+    def _on_middle_drag(self, event) -> None:
+        """Handle panning while middle mouse is held down."""
+        if not getattr(self, '_pan_active', False):
+            return
+
+        dx_pixels = event.x - getattr(self, '_pan_last_x', event.x)
+        self._pan_last_x = event.x
+
+        if dx_pixels == 0:
+            return
+
+        # Convert pixel delta to time delta based on current visible seconds and pixel width
+        bbox = self.ax.get_position()
+        fig_width_px = self.fig.get_figwidth() * self.fig.dpi
+        ax_width_px = bbox.width * fig_width_px
+        if ax_width_px <= 0:
+            return
+
+        visible_seconds = self.zoom_controller.get_visible_seconds()
+        seconds_per_pixel = visible_seconds / ax_width_px
+
+        # Negative dx (drag left) should move view to earlier time (decrease offset)
+        delta_seconds = -dx_pixels * seconds_per_pixel
+
+        # For live mode, cap using current_time so the right edge won't exceed content
+        is_live = (self.recording_display.recording_duration == 0)
+        current_time = self.current_time if is_live else 0.0
+
+        # Compute boundary before/after for indicator decision
+        prev_offset = self.zoom_controller.view_offset
+        new_offset = self.zoom_controller.pan_by_seconds(delta_seconds, current_time=current_time)
+
+        # Decide if we hit a boundary and show an indicator briefly
+        visible_seconds = self.zoom_controller.get_visible_seconds()
+        if is_live:
+            max_offset = max(0.0, max(0.0, current_time) - visible_seconds)
+        else:
+            max_offset = max(0.0, max(0.0, self.recording_display.recording_duration) - visible_seconds)
+
+        if self.edge_indicator is not None:
+            if new_offset <= 0.0 and delta_seconds < 0:
+                self.edge_indicator.show('left')
+            elif new_offset >= max_offset and delta_seconds > 0:
+                self.edge_indicator.show('right')
+
+        # Update display in-place without changing zoom
+        self._update_time_axis_labels(
+            self.zoom_controller.view_offset,
+            self.zoom_controller.view_offset + self.zoom_controller.get_visible_seconds()
+        )
+        self._update_spectrogram_view()
+        self.draw_idle()
+
+    def _on_middle_release(self, event) -> None:
+        """Finish panning with middle mouse button."""
+        self._pan_active = False
+
     def _update_after_zoom(self) -> None:
         """Update display after zoom change."""
-        # Update zoom indicator
         self._update_zoom_indicator()
-
-        # Update time axis
-        visible_seconds = self.zoom_controller.get_visible_seconds()
-        self._update_time_axis(
+        self._update_time_axis_labels(
             self.zoom_controller.view_offset,
-            self.zoom_controller.view_offset + visible_seconds
+            self.zoom_controller.view_offset + self.zoom_controller.get_visible_seconds()
         )
-
-        # Update spectrogram view
-        if self.recording_display.all_spec_frames or self.recording_handler.all_spec_frames:
-            self._update_spectrogram_view()
-
+        self._update_spectrogram_view()
         self.draw_idle()
 
     def _update_zoom_indicator(self) -> None:
@@ -535,23 +612,65 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
             self.zoom_indicator.set_visible(False)
             self.draw_idle()
 
+    def _update_time_axis_for_current_state(self) -> None:
+        """Update time axis based on current recording state."""
+        if self.recording_display.recording_duration > 0:
+            self._update_time_axis_labels(0, self.recording_display.recording_duration)
+        else:
+            self._update_time_axis_labels(0, UIConstants.SPECTROGRAM_DISPLAY_SECONDS)
+
+    def _create_spectrogram_imshow(self, data: np.ndarray, n_mels: int) -> AxesImage:
+        """Create a new imshow with standard parameters.
+
+        Args:
+            data: The spectrogram data to display
+            n_mels: Number of mel bins
+        """
+        return self.ax.imshow(
+            data,
+            aspect='auto',
+            origin='lower',
+            cmap='viridis',
+            interpolation='bilinear',
+            vmin=AudioConstants.DB_MIN,
+            vmax=AudioConstants.DB_MAX,
+            extent=(0, self.spec_frames - 1, 0, n_mels - 1)
+        )
+
+    def _update_or_recreate_image(self, data: np.ndarray, n_mels: int,
+                                  force_recreate: bool = False) -> None:
+        """Update existing image or recreate if dimensions changed.
+
+        Args:
+            data: The spectrogram data to display
+            n_mels: Number of mel bins
+            force_recreate: Force recreation even if dimensions match
+        """
+        current_shape = self.im.get_array().shape if self.im else None
+        needs_recreation = (
+            force_recreate or
+            not current_shape or
+            current_shape[0] != n_mels or
+            current_shape[1] != self.spec_frames
+        )
+
+        if needs_recreation:
+            if self.im:
+                self.im.remove()
+            self.im = self._create_spectrogram_imshow(data, n_mels)
+        else:
+            self.update_display_data(data, n_mels)
+
     # Update methods
     def _update_spectrogram_view(self) -> None:
         """Update spectrogram display based on zoom/offset."""
         # Get the correct frame source
-        all_frames = self._get_all_spec_frames()
-        if all_frames:
+        if self.all_spec_frames:
             if self.recording_display.recording_duration > 0:
                 self._update_recording_view()
             else:
                 self._update_live_view()
 
-    def _get_all_spec_frames(self) -> List[np.ndarray]:
-        """Get the current spec frames from the appropriate source."""
-        if self.recording_display.all_spec_frames:
-            return self.recording_display.all_spec_frames
-        else:
-            return self.recording_handler.all_spec_frames
 
     def _update_recording_view(self) -> None:
         """Update view for loaded recordings."""
@@ -563,16 +682,16 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
 
     def _update_live_view(self) -> None:
         """Update view for live recording."""
-        start_frame = int(self.zoom_controller.view_offset * self.frames_per_second)
-        visible_frames = int((UIConstants.SPECTROGRAM_DISPLAY_SECONDS / self.zoom_controller.zoom_level) * self.frames_per_second)
-        end_frame = min(start_frame + visible_frames, len(self.recording_handler.all_spec_frames))
+        frames = self.recording_handler.all_spec_frames
+        start_frame, visible_frames = self.zoom_controller.calculate_visible_frame_range(self.frames_per_second)
+        end_frame = min(start_frame + visible_frames, len(frames))
 
-        if start_frame < len(self.recording_handler.all_spec_frames):
-            visible_data = self.recording_handler.all_spec_frames[start_frame:end_frame]
+        if start_frame < len(frames):
+            visible_data = frames[start_frame:end_frame]
 
             if visible_data:
-                visible_array = np.array(visible_data).T
-                self.update_display_data(visible_array)
+                # Use the same resampling method as recording view
+                self._display_resampled_frames(visible_data, start_frame, end_frame)
 
     def _display_resampled_frames(self, visible_frames: List[np.ndarray],
                                  start_frame: int, end_frame: int,
@@ -602,12 +721,9 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
         if n_frames_visible > 1:
             # Resample to fit display
             resampled = self._resample_frames_to_display(visible_array, n_mels, n_frames_visible)
-            self.update_display_data(resampled)
+            self.update_display_data(resampled, n_mels)
         else:
-            self.update_display_data(visible_array)
-
-        # Update extent
-        self.im.set_extent((0, self.spec_frames - 1, 0, n_mels - 1))
+            self.update_display_data(visible_array, n_mels)
 
         # Update clipping markers only for playback (not live recording)
         # For live recording, markers are updated separately in _update_display()
@@ -626,15 +742,7 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
         )
         self.clipping_visualizer.show_warning()
 
-    def _update_frequency_axis(self) -> None:
-        """Update frequency axis to default."""
-        self.freq_axis_manager.update_default_axis(
-            self.adaptive_n_mels,
-            self.mel_processor.fmin,
-            self.mel_processor.actual_fmax
-        )
-
-    def _update_frequency_axis_for_recording(self, sample_rate: int) -> None:
+    def _update_frequency_axis(self, sample_rate: int) -> None:
         """Update frequency axis for a specific recording."""
         # Update frequency axis using the recording_axis method
         self.freq_axis_manager.update_recording_axis(
@@ -645,52 +753,82 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
     def _update_frequency_display(self) -> None:
         """Update highest frequency display."""
         if self.max_detected_freq > 0:
-            # Use recording-specific parameters if available
-            n_mels = getattr(self, '_recording_n_mels', self.adaptive_n_mels)
-            fmax = getattr(self, '_recording_fmax', self.mel_processor.actual_fmax)
-
+            # Use recording-specific parameters
             self.freq_axis_manager.highlight_max_frequency(
                 self.max_detected_freq,
-                n_mels,
+                self._recording_n_mels,
                 self.mel_processor.fmin,
-                fmax
+                self._recording_fmax
             )
 
-    # Schedule display updates
     def _on_spec_frames_changed(self, old_frames: int, new_frames: int) -> None:
-        """Handle spec_frames change due to window resize."""
+        """Handle spec_frames change due to window resize.
+
+        This is called from within _on_resize() event inside the base class.
+        """
         # Update handlers with new spec_frames
         self.recording_handler.spec_frames = new_frames
         self.playback_handler.spec_frames = new_frames
         self.recording_display.spec_frames = new_frames
 
-        # Recreate spectrogram image with new dimensions
+        # Update edge indicator positions to match new width
+        if self.edge_indicator is not None:
+            self.edge_indicator.update_positions(new_frames)
+
+        # Recreate spectrogram display with new dimensions
         if self.im:
-            self.im.remove()
-            self._create_spectrogram_image()
+            self._update_spectrogram_view()
 
         # Update time axis to ensure full time range is shown
-        if self.recording_display.recording_duration > 0:
-            self._update_time_axis(0, self.recording_display.recording_duration)
-        else:
-            self._update_time_axis(0, UIConstants.SPECTROGRAM_DISPLAY_SECONDS)
+        self._update_time_axis_for_current_state()
+        self._refresh_display()
+        # Also apply current zoom-level
+        if self.zoom_controller.zoom_level > 1.0:
+            self._update_after_zoom()
 
-        # Redisplay current content if any
-        if self.recording_display.all_spec_frames:
-            # Reprocess the display data for new width
-            self._refresh_display()
 
     def _refresh_display(self) -> None:
         """Refresh the display after spec_frames change."""
         if self.recording_display.recording_duration > 0:
-            # We have a loaded recording - update it
+            # We have a loaded recording - resample it for new display width
             display_data = self.recording_display.resample_spectrogram_for_display(
                 np.array(self.recording_display.all_spec_frames).T,
                 len(self.recording_display.all_spec_frames),
-                self._recording_n_mels if hasattr(self, '_recording_n_mels') else self.adaptive_n_mels
+                self._recording_n_mels
             )
-            self.update_display_data(display_data)
+            n_mels = self._recording_n_mels
+            duration = self.recording_display.recording_duration
+            sample_rate = self._recording_sample_rate
+        else:
+            # No recording - create empty display data
+            display_data = np.ones((self.adaptive_n_mels, self.spec_frames)) * AudioConstants.DB_MIN
+            n_mels = self.adaptive_n_mels
+            duration = UIConstants.SPECTROGRAM_DISPLAY_SECONDS
+            sample_rate = self.audio_config.sample_rate
+
+        self._finalize_recording_display(display_data, n_mels, duration, sample_rate)
+
+    def _on_figure_size_changed(self) -> None:
+        """Called when figure size changes but spec_frames stays the same."""
+        # When the figure size changes but spec_frames stays constant,
+        # we still need to redraw to ensure the plot fills the canvas
+        if self.recording_display.all_spec_frames:
+            self._refresh_display()
+        else:
             self.canvas.draw()
+
+    # --- Edge indicator helpers ---
+    def _init_edge_indicator(self) -> None:
+        """Initialize edge indicator controller."""
+        if self.edge_indicator is None:
+            self.edge_indicator = EdgeIndicator(
+                self.ax,
+                color=UIConstants.COLOR_EDGE_INDICATOR,
+                linewidth=UIConstants.EDGE_INDICATOR_WIDTH,
+                alpha=UIConstants.EDGE_INDICATOR_ALPHA,
+                timeout_ms=UIConstants.EDGE_INDICATOR_TIMEOUT_MS,
+                after_call=self.parent.after,
+            )
 
     def schedule_update(self) -> None:
         """Schedule a display update (called from main app)."""
@@ -714,7 +852,6 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
     def _recording_update_loop(self) -> None:
         """Periodic update loop for recording display."""
         if self.recording_handler.is_recording:
-            # Update display
             self._update_display()
 
             # Schedule next update

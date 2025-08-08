@@ -147,6 +147,21 @@ class ZoomController:
 
         return True
 
+    def calculate_visible_frame_range(self, frames_per_second: float,
+                                     display_seconds: float = UIConstants.SPECTROGRAM_DISPLAY_SECONDS) -> Tuple[int, int]:
+        """Calculate the visible frame range based on current zoom and offset.
+
+        Args:
+            frames_per_second: Frame rate
+            display_seconds: Display duration in seconds (default: SPECTROGRAM_DISPLAY_SECONDS)
+
+        Returns:
+            Tuple of (start_frame, visible_frame_count)
+        """
+        start_frame = int(self.view_offset * frames_per_second)
+        visible_frames = int((display_seconds / self.zoom_level) * frames_per_second)
+        return start_frame, visible_frames
+
     def get_zoom_info_text(self) -> str:
         """Get formatted zoom information text.
 
@@ -155,3 +170,42 @@ class ZoomController:
         """
         visible_seconds = self.get_visible_seconds()
         return f"Zoom: {self.zoom_level:.1f}x ({visible_seconds:.2f}s)"
+
+    # --- Panning helpers ---
+    def clamp_view_offset(self, desired_offset: float, current_time: float = 0.0) -> float:
+        """Clamp a desired view offset to valid bounds.
+
+        Args:
+            desired_offset: Proposed offset in seconds
+            current_time: For live mode, the latest known time
+
+        Returns:
+            Clamped offset in seconds
+        """
+        visible_seconds = self.get_visible_seconds()
+
+        if self.recording_duration > 0:
+            max_offset = max(0.0, self.recording_duration - visible_seconds)
+        else:
+            # Live mode: clamp against current time (window must end <= current_time)
+            max_offset = max(0.0, max(0.0, current_time) - visible_seconds)
+
+        if desired_offset < 0.0:
+            return 0.0
+        if desired_offset > max_offset:
+            return max_offset
+        return desired_offset
+
+    def pan_by_seconds(self, delta_seconds: float, current_time: float = 0.0) -> float:
+        """Pan the view by a time delta, clamped to bounds.
+
+        Args:
+            delta_seconds: Positive pans to later times; negative pans to earlier times
+            current_time: For live mode, the latest known time
+
+        Returns:
+            New clamped view_offset
+        """
+        desired = self.view_offset + delta_seconds
+        self.view_offset = self.clamp_view_offset(desired, current_time=current_time)
+        return self.view_offset

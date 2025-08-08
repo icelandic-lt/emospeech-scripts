@@ -147,6 +147,33 @@ class RecordingFileManager:
             takes[label] = self.get_highest_take(label)
         return takes
 
+    def get_file_info(self, file_path: Path) -> Optional[Tuple[int, int, str, int, float]]:
+        """Get audio file information.
+
+        Args:
+            file_path: Path to audio file
+
+        Returns:
+            Tuple of (sample_rate, bit_depth, format, channels, duration) or None
+        """
+        try:
+            info = sf.info(str(file_path))
+
+            # Determine bit depth from subtype
+            bit_depth = 16  # default
+            if 'PCM_24' in info.subtype or 'FLAC' in info.subtype:
+                bit_depth = 24
+            elif 'PCM_16' in info.subtype:
+                bit_depth = 16
+
+            # Format
+            format_name = 'FLAC' if info.format == 'FLAC' else 'WAV'
+
+            return (info.samplerate, bit_depth, format_name, info.channels, info.duration)
+        except Exception as e:
+            print(f"Error reading file info: {e}")
+            return None
+
     def load_audio(self, filepath: Path) -> Tuple[np.ndarray, int]:
         """Load audio file and return data with sample rate.
 

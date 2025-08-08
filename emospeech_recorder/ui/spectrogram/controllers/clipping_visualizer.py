@@ -52,10 +52,8 @@ class ClippingVisualizer:
         )
         line._is_clipping_marker = True
 
-    def update_markers_for_display(self, n_frames: int, spec_frames: int) -> None:
-        """Update clipping markers for initial display.
-
-        Maps clipping positions from recording frames to display frames.
+    def update_display(self, n_frames: int, spec_frames: int) -> None:
+        """Updates display with all detected clipping positions and show warning if needed.
 
         Args:
             n_frames: Total number of frames in recording
@@ -63,12 +61,14 @@ class ClippingVisualizer:
         """
         self.clear_markers()
 
+        # iterate over all clipping positions and map them to the scaled display position
         for clip_pos in self.clipping_markers:
             if 0 <= clip_pos < n_frames:
                 # Map from recording frames to display frames
                 display_pos = int((clip_pos / n_frames) * spec_frames)
                 if 0 <= display_pos < spec_frames:
                     self.add_marker_line(display_pos)
+        self.show_warning()
 
     def update_markers_for_zoom(self, start_frame: int, end_frame: int, spec_frames: int) -> None:
         """Update clipping markers for zoomed view.
@@ -112,7 +112,7 @@ class ClippingVisualizer:
             # Calculate how many frames ago this clipping occurred
             frames_ago = frame_count - clip_pos
 
-            if frames_ago >= 0 and frames_ago < spec_frames:
+            if 0 <= frames_ago < spec_frames:
                 # The marker should appear at position from the right
                 # spec_frames - 1 is the rightmost (newest) position
                 # 0 is the leftmost (oldest) position

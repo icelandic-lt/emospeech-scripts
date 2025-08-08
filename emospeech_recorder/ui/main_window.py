@@ -2,16 +2,18 @@
 
 from typing import Optional, Callable
 import tkinter as tk
-from tkinter import ttk
 from pathlib import Path
 
-from ..constants import UIConstants, KeyBindings
-from ..utils.config import UIConfig, RecorderConfig
+from ..constants import UIConstants
+from ..utils.config import RecorderConfig
 from ..utils.state import UIState, RecordingState
 from ..utils.settings_manager import SettingsManager
 from .spectrogram import MelSpectrogramWidget
 from .icon import AppIcon
 from .info_overlay import InfoOverlay
+from .level_meter import RecordingStandard
+from .level_meter.led_level_meter import LEDLevelMeter
+from .level_meter.config import RECORDING_STANDARDS, LevelMeterConfig
 
 
 class MainWindow:
@@ -83,7 +85,10 @@ class MainWindow:
         # Create info overlay
         self.info_overlay = InfoOverlay(self.root)
 
-        # Show info overlay if enabled in settings
+        # Initialize embedded level meter (will be created in _create_control_area)
+        self.embedded_level_meter = None
+
+        # Show overlays if enabled in settings
         if getattr(self.settings_manager.settings, 'show_info_overlay', False):
             self.info_overlay.visible = True
             # Update checkbox
@@ -92,12 +97,33 @@ class MainWindow:
             # Show after window is ready
             self.root.after(100, lambda: self._show_info_overlay_on_startup())
 
+        if getattr(self.settings_manager.settings, 'show_level_meter', False):
+            # Show embedded level meter
+            self.show_level_meter()
+            # Update checkbox
+            if hasattr(self, 'level_meter_var'):
+                self.level_meter_var.set(True)
+            # Force refresh shortly after showing to prevent blank canvas
+            if hasattr(self, 'embedded_level_meter') and self.embedded_level_meter:
+                self.root.after(20, self.embedded_level_meter.refresh)
 
         # Bind resize events
         self.root.bind('<Configure>', self._on_window_resize)
 
         # Force initial resize event after window is mapped
         self.root.after(50, self._trigger_initial_resize)
+
+    def show_level_meter(self):
+        """Show level meter
+        """
+        # Create embedded level meter if it doesn't exist yet
+        if not hasattr(self, 'embedded_level_meter') or self.embedded_level_meter is None:
+            self._create_embedded_level_meter()
+
+        if hasattr(self, 'level_meter_frame') and self.level_meter_frame:
+            self.level_meter_frame.grid_forget()
+            self.level_meter_frame.grid(row=0, column=1, sticky="ns", padx=(UIConstants.FRAME_SPACING, 0))
+            self.level_meter_frame.grid_propagate(False)
 
     def _setup_screen_geometry(self) -> None:
         """Get screen dimensions and calculate window size.
@@ -190,7 +216,11 @@ class MainWindow:
         # File menu
         file_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="File", menu=file_menu)
-        file_menu.add_command(label="Quit", command=self.root.quit, accelerator="Q")
+        # Route Quit via app callback if provided to ensure clean shutdown
+        quit_cmd = (self.app_callbacks.get('quit')
+                    if isinstance(getattr(self, 'app_callbacks', None), dict) and 'quit' in self.app_callbacks
+                    else self.root.quit)
+        file_menu.add_command(label="Quit", command=quit_cmd, accelerator="Q")
 
         # View menu
         view_menu = tk.Menu(self.menubar, tearoff=0)
@@ -205,6 +235,15 @@ class MainWindow:
             accelerator="M"
         )
 
+        # Level Meter checkbutton
+        self.level_meter_var = tk.BooleanVar(value=getattr(self.settings_manager.settings, 'show_level_meter', False))
+        view_menu.add_checkbutton(
+            label="Show Level Meter",
+            variable=self.level_meter_var,
+            command=self._toggle_level_meter_callback,
+            accelerator="L"
+        )
+
         # Info Overlay checkbutton
         self.info_overlay_var = tk.BooleanVar(value=getattr(self.settings_manager.settings, 'show_info_overlay', False))
         view_menu.add_checkbutton(
@@ -213,6 +252,19 @@ class MainWindow:
             command=self._toggle_info_overlay_callback,
             accelerator="I"
         )
+
+        view_menu.add_separator()
+
+        # Monitoring mode checkbutton
+        self.monitoring_var = tk.BooleanVar(value=False)
+        view_menu.add_checkbutton(
+            label="Monitor Input Levels",
+            variable=self.monitoring_var,
+            command=self._toggle_monitoring_callback,
+            accelerator="O"
+        )
+
+        view_menu.add_separator()
 
         # Fullscreen checkbutton
         self.fullscreen_var = tk.BooleanVar(value=self.config.ui.fullscreen)
@@ -257,6 +309,25 @@ class MainWindow:
                 command=lambda d=depth: self._on_bit_depth_change(d)
             )
 
+        # Level Meter Preset submenu
+        level_meter_menu = tk.Menu(settings_menu, tearoff=0)
+        settings_menu.add_cascade(label="Level Meter Preset", menu=level_meter_menu)
+
+        # Create radio buttons for each preset
+        self.level_meter_preset_var = tk.StringVar(
+            value=getattr(self.settings_manager.settings, 'level_meter_preset', 'broadcast_ebu')
+        )
+
+        from .level_meter.config import RecordingStandard, get_standard_description
+        for standard in RecordingStandard:
+            if standard != RecordingStandard.CUSTOM:  # Skip CUSTOM for now
+                level_meter_menu.add_radiobutton(
+                    label=get_standard_description(standard),
+                    variable=self.level_meter_preset_var,
+                    value=standard.value,
+                    command=lambda s=standard.value: self.set_level_meter_preset(s)
+                )
+
         # Help menu
         help_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Help", menu=help_menu)
@@ -271,11 +342,11 @@ class MainWindow:
         shortcuts_window.geometry("800x600")
         shortcuts_window.resizable(False, False)
 
-        # Create text widget with shortcuts
+        # Create text widget with monospaced font for alignment
         text = tk.Text(shortcuts_window, wrap=tk.WORD, padx=30, pady=30,
                       bg=UIConstants.COLOR_BACKGROUND,
                       fg=UIConstants.COLOR_TEXT_NORMAL,
-                      font=('TkDefaultFont', 14))
+                      font=('Courier New', 18))
         text.pack(fill=tk.BOTH, expand=True)
 
         # Add shortcuts text
@@ -291,6 +362,8 @@ NAVIGATION:
 
 DISPLAY:
   M        Toggle Mel Spectrogram
+  L        Toggle Level Meter
+  O        Monitor Input Levels
   F10      Toggle Fullscreen
   I        Show Audio Info Overlay
 
@@ -340,6 +413,23 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
         else:
             self.toggle_spectrogram()
 
+    def _toggle_level_meter_callback(self) -> None:
+        """Callback for menu toggle level meter."""
+        # Toggle embedded level meter
+        show_meter = self.level_meter_var.get()
+        if show_meter:
+            self.show_level_meter()
+            # Force a redraw to avoid white area on re-show
+            if hasattr(self, 'embedded_level_meter') and self.embedded_level_meter:
+                self.root.after(10, self.embedded_level_meter.refresh)
+        else:
+            # Hide embedded level meter
+            if hasattr(self, 'level_meter_frame') and self.level_meter_frame:
+                self.level_meter_frame.grid_forget()
+
+        # Update settings
+        self.settings_manager.update_setting('show_level_meter', self.level_meter_var.get())
+
     def _toggle_info_overlay_callback(self) -> None:
         """Callback for menu toggle info overlay."""
         # Toggle info overlay
@@ -359,6 +449,12 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
             # Update checkbox
             if hasattr(self, 'info_overlay_var'):
                 self.info_overlay_var.set(False)
+
+    def _toggle_monitoring_callback(self) -> None:
+        """Callback for menu toggle monitoring mode."""
+        # Use app callback if available
+        if 'toggle_monitoring' in self.app_callbacks:
+            self.app_callbacks['toggle_monitoring']()
 
     def _toggle_fullscreen_callback(self) -> None:
         """Callback for menu toggle fullscreen."""
@@ -531,7 +627,7 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
         """Create the bottom control area.
 
         Creates the bottom panel containing the optional mel spectrogram
-        widget and keyboard shortcuts help text. Height is proportional
+        widget and level meter. Height is proportional
         to window size.
         """
         height = int(self.ui_state.window_height * UIConstants.CONTROL_FRAME_HEIGHT_RATIO)
@@ -544,12 +640,27 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
         self.control_frame.pack(fill=tk.X, pady=(UIConstants.FRAME_SPACING, 0))
         self.control_frame.pack_propagate(False)
 
+        # Create horizontal container for spectrogram and level meter
+        self.spec_container = tk.Frame(
+            self.control_frame,
+            bg=UIConstants.COLOR_BACKGROUND
+        )
+        self.spec_container.pack(fill=tk.BOTH, expand=True, padx=UIConstants.FRAME_SPACING)
+
+        # Configure grid layout for spec_container children
+        self.spec_container.grid_columnconfigure(0, weight=1)  # spec_frame expands
+        self.spec_container.grid_columnconfigure(1, weight=0)  # level_meter fixed width
+        self.spec_container.grid_rowconfigure(0, weight=1)
+
         # Always create spectrogram widget, but hide if not enabled
         self._create_spectrogram_widget()
 
+        # Create level meter widget
+        self._create_embedded_level_meter()
+
         # Hide if not enabled in settings
         if not self.config.display.show_spectrogram:
-            self.spec_frame.pack_forget()
+            self.spec_frame.grid_forget()
             self.ui_state.spectrogram_visible = False
 
 
@@ -557,22 +668,19 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
         """Create the mel spectrogram widget.
 
         Creates a frame and initializes the MelSpectrogramWidget for
-        real-time audio visualization. Only created if spectrogram
-        display is enabled in configuration.
+        real-time audio visualization.
         """
         # Create frame for spectrogram
         self.spec_frame = tk.Frame(
-            self.control_frame,
-            bg=UIConstants.COLOR_BACKGROUND,
-            height=200
+            self.spec_container,
+            bg=UIConstants.COLOR_BACKGROUND
         )
-        self.spec_frame.pack(
-            fill=tk.BOTH,
-            expand=True,
-            padx=UIConstants.FRAME_SPACING,
-            pady=(0, UIConstants.FRAME_SPACING)
-        )
-        self.spec_frame.pack_propagate(False)
+        self.spec_frame.grid(row=0, column=0, sticky="nsew")
+
+        # Configure grid weights for spec_container
+        self.spec_container.grid_columnconfigure(0, weight=1)  # spec_frame expands
+        self.spec_container.grid_columnconfigure(1, weight=0)  # level_meter fixed width
+        self.spec_container.grid_rowconfigure(0, weight=1)
 
         # Create mel spectrogram widget
         self.mel_spectrogram = MelSpectrogramWidget(
@@ -584,6 +692,30 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
         )
 
         self.ui_state.spectrogram_visible = True
+
+    def _create_embedded_level_meter(self) -> None:
+        """Create the embedded LED level meter."""
+        # Create frame for level meter
+        self.level_meter_frame = tk.Frame(
+            self.spec_container,
+            bg=UIConstants.COLOR_BACKGROUND,
+            width=130  # Increased width for level meter for better readability
+        )
+        # Don't pack yet - will be managed by toggle methods
+
+        # Create LED level meter
+        if self.shared_audio_state:
+            self.embedded_level_meter = LEDLevelMeter(
+                self.level_meter_frame,
+                self.shared_audio_state
+            )
+            self.embedded_level_meter.pack(fill=tk.BOTH, expand=True)
+
+            # Apply saved preset from settings
+            preset_str = getattr(self.settings_manager.settings, 'level_meter_preset', 'broadcast_ebu')
+            self.root.after(100, lambda: self.set_level_meter_preset(preset_str))
+        else:
+            self.embedded_level_meter = None
 
     def _calculate_font_sizes(self) -> None:
         """Calculate dynamic font sizes based on window dimensions.
@@ -644,7 +776,7 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
             self._calculate_font_sizes()
             self._apply_fonts()
 
-            # Update info overlay position if it exists
+            # Update overlay position if it exists
             if hasattr(self, 'info_overlay'):
                 self.info_overlay.update_position()
 
@@ -798,17 +930,11 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
         if hasattr(self, 'spec_frame') and self.spec_frame:
             if self.spec_frame.winfo_viewable():
                 # Hide spectrogram
-                self.spec_frame.pack_forget()
+                self.spec_frame.grid_forget()
                 self.ui_state.spectrogram_visible = False
             else:
                 # Show spectrogram
-                self.spec_frame.pack(
-                    fill=tk.BOTH,
-                    expand=True,
-                    padx=UIConstants.FRAME_SPACING,
-                    pady=(0, UIConstants.FRAME_SPACING)
-                )
-                self.spec_frame.pack_propagate(False)
+                self.spec_frame.grid(row=0, column=0, sticky="nsew")
                 self.ui_state.spectrogram_visible = True
 
                 # Force redraw to avoid white display
@@ -867,22 +993,55 @@ Used to create Talrómur 3, the Icelandic emotional speech dataset."""
             self.root.after(UIConstants.FOCUS_DELAY_MS,
                            lambda: self.root.focus_force())
 
-    def show_info_overlay(self, file_path: Optional[Path] = None,
-                         is_recording: bool = False,
-                         recording_params: Optional[dict] = None) -> None:
+    def set_level_meter_preset(self, preset_name: str) -> None:
+        """Set level meter configuration based on recording preset.
+
+        Args:
+            preset_name: Name of the recording preset (e.g., 'broadcast_ebu')
+        """
+        # Find the matching standard enum
+        standard_enum = None
+        for std in RecordingStandard:
+            if std.value == preset_name:
+                standard_enum = std
+                break
+
+        if not standard_enum or standard_enum not in RECORDING_STANDARDS:
+            print(f"Unknown recording preset: {preset_name}")
+            return
+
+        # Get the configuration for this preset
+        config = RECORDING_STANDARDS[standard_enum]
+
+        # Apply to embedded level meter if it exists
+        if hasattr(self, 'embedded_level_meter') and self.embedded_level_meter:
+            # Reset via shared state so producer/consumer are in Sync
+            try:
+                self.shared_audio_state.reset_level_meter()
+            except Exception:
+                pass
+            self.embedded_level_meter.set_config(config)
+
+        # Save the setting
+        self.settings_manager.update_setting('level_meter_preset', preset_name)
+
+        # Update the menu variable
+        if hasattr(self, 'level_meter_preset_var'):
+            self.level_meter_preset_var.set(preset_name)
+
+    def show_info_overlay(self, recording_params: dict, is_recording: bool) -> None:
         """Show or toggle the info overlay.
 
         Args:
-            file_path: Path to audio file
+            recording_params: Recording parameters dict (sample_rate, bit_depth, channels, etc.)
             is_recording: Whether currently recording
-            recording_params: Recording parameters dict
         """
         # Toggle visibility
         self.info_overlay.toggle()
 
         # If now visible, show with parameters after small delay
         if self.info_overlay.visible:
-            self.root.after(10, lambda: self.info_overlay.show(file_path, is_recording, recording_params))
+            self.root.after(10, lambda: self.info_overlay.show(recording_params, is_recording))
 
     def _show_info_overlay_on_startup(self) -> None:
         """Show info overlay on startup with current state."""

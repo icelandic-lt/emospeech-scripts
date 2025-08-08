@@ -1,11 +1,6 @@
 """Info overlay widget for displaying audio file information."""
 
 import tkinter as tk
-from typing import Optional, Tuple
-from pathlib import Path
-import soundfile as sf
-
-from ..constants import UIConstants
 
 
 class InfoOverlay:
@@ -100,63 +95,40 @@ class InfoOverlay:
         )
         self.size_label.pack(anchor='w', fill='x', pady=2)
 
-    def _get_file_info(self, file_path: Path) -> Optional[Tuple[int, int, str, int, float]]:
-        """Get audio file information.
+
+    def show(self, recording_params: dict, is_recording: bool = False, is_monitoring: bool = False) -> None:
+        """Show the overlay with recording information.
 
         Args:
-            file_path: Path to audio file
-
-        Returns:
-            Tuple of (sample_rate, bit_depth, format, channels, duration) or None
-        """
-        try:
-            info = sf.info(str(file_path))
-
-            # Determine bit depth from subtype
-            bit_depth = 16  # default
-            if 'PCM_24' in info.subtype or 'FLAC' in info.subtype:
-                bit_depth = 24
-            elif 'PCM_16' in info.subtype:
-                bit_depth = 16
-
-            # Format
-            format_name = 'FLAC' if info.format == 'FLAC' else 'WAV'
-
-            return (info.samplerate, bit_depth, format_name, info.channels, info.duration)
-        except Exception as e:
-            print(f"Error reading file info: {e}")
-            return None
-
-    def show(self, file_path: Optional[Path] = None, is_recording: bool = False,
-             recording_params: Optional[dict] = None) -> None:
-        """Show the overlay with file information.
-
-        Args:
-            file_path: Path to audio file
+            recording_params: Dict with recording parameters (sample_rate, bit_depth, channels,
+                            format, duration, size)
             is_recording: Whether currently recording
-            recording_params: Dict with recording parameters (sample_rate, bit_depth, channels)
+            is_monitoring: Whether currently monitoring (takes precedence over is_recording)
         """
-        if is_recording and recording_params:
-            # Show actual recording parameters
-            self.sample_rate_label.config(text=f"{recording_params.get('sample_rate', 48000)} Hz")
-            self.bit_depth_label.config(text=f"{recording_params.get('bit_depth', 24)} bit")
-            channels = recording_params.get('channels', 1)
-            channel_text = "Mono" if channels == 1 else "Stereo"
+        # Show actual recording parameters
+        self.sample_rate_label.config(text=f"{recording_params.get('sample_rate', 48000)} Hz")
+        self.bit_depth_label.config(text=f"{recording_params.get('bit_depth', 24)} bit")
+        channels = recording_params.get('channels', 1)
+        channel_text = "Mono" if channels == 1 else "Stereo"
+
+        if is_monitoring:
+            # Currently monitoring
+            self.format_label.config(text=f"Monitoring {channel_text}")
+            self.duration_label.config(text="Monitoring...")
+            self.size_label.config(text="")
+        elif is_recording:
+            # Currently recording
             self.format_label.config(text=f"Recording {channel_text}")
             self.duration_label.config(text="Recording...")
             self.size_label.config(text="")
-        elif file_path and file_path.exists():
-            # Get file info
-            file_info = self._get_file_info(file_path)
+        else:
+            # Show file info or ready state
+            format_name = recording_params.get('format', 'FLAC')
+            duration = recording_params.get('duration', 0)
+            size_bytes = recording_params.get('size', 0)
 
-            if file_info:
-                sample_rate, bit_depth, format_name, channels, duration = file_info
-
-                # Update labels
-                self.sample_rate_label.config(text=f"{sample_rate} Hz")
-                self.bit_depth_label.config(text=f"{bit_depth} bit")
-
-                channel_text = "Mono" if channels == 1 else "Stereo"
+            if duration > 0:
+                # We have a recording
                 self.format_label.config(text=f"{format_name} {channel_text}")
 
                 # Duration
@@ -166,7 +138,6 @@ class InfoOverlay:
                 self.duration_label.config(text=duration_text)
 
                 # File size
-                size_bytes = file_path.stat().st_size
                 if size_bytes < 1024:
                     size_text = f"{size_bytes} B"
                 elif size_bytes < 1024 * 1024:
@@ -175,18 +146,10 @@ class InfoOverlay:
                     size_text = f"{size_bytes / (1024 * 1024):.1f} MB"
                 self.size_label.config(text=size_text)
             else:
-                self.sample_rate_label.config(text="Error reading file")
-                self.bit_depth_label.config(text="")
-                self.format_label.config(text="")
-                self.duration_label.config(text="")
+                # No recording - show ready state
+                self.format_label.config(text=f"{channel_text}")
+                self.duration_label.config(text="No recording")
                 self.size_label.config(text="")
-        else:
-            # No recording
-            self.sample_rate_label.config(text="No recording")
-            self.bit_depth_label.config(text="")
-            self.format_label.config(text="")
-            self.duration_label.config(text="")
-            self.size_label.config(text="")
 
         # Show the frame with relative positioning
         self.frame.place(relx=0.98, rely=0.12, anchor='ne')

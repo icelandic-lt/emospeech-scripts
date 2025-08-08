@@ -1,7 +1,10 @@
 """Ring buffer manager for shared memory audio buffers.
 
 This module provides a thread-safe ring buffer implementation for managing
-shared memory buffers across multiple processes.
+shared memory buffers across multiple processes. We usually only use one of
+these buffers at the same time, but because of synchronization overhead
+at cleanup time, e.g. when switching between monitoring, recording, playback etc.
+having multiple valid buffers makes smoother transitions possible.
 """
 
 import threading
@@ -56,7 +59,8 @@ class BufferManager:
 
             return buffer
 
-    def _cleanup_buffer(self, buffer: AudioBuffer) -> None:
+    @staticmethod
+    def _cleanup_buffer(buffer: AudioBuffer) -> None:
         """Clean up a buffer that's no longer needed.
 
         Args:

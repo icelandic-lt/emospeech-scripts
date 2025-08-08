@@ -8,7 +8,8 @@ import struct
 import time
 from multiprocessing import shared_memory
 from typing import Optional, Tuple, NamedTuple
-import numpy as np
+
+from emospeech_recorder.constants import AudioConstants
 
 
 # Status constants
@@ -79,6 +80,23 @@ class AudioSettingsFormat(NamedTuple):
     size: int = struct.calcsize(_AUDIO_SETTINGS_FORMAT)
 
 
+# Level meter format - for real-time audio level monitoring
+_LEVEL_METER_FORMAT = 'BxxxffffQ'  # B=status (first), xxx=padding, then rest
+
+class LevelMeterFormat(NamedTuple):
+    """Format definition for level meter state structure."""
+    format: str = _LEVEL_METER_FORMAT
+    fields: Tuple[str, ...] = (
+        'status',         # B - unsigned char (1 byte + 3 padding)
+        'rms_db',         # f - float (4 bytes) - RMS level in dB
+        'peak_db',        # f - float (4 bytes) - Peak level in dB
+        'peak_hold_db',   # f - float (4 bytes) - Peak hold level in dB
+        'update_time',    # f - float (4 bytes) - Update timestamp
+        'frame_count',    # Q - unsigned long long (8 bytes) - Frame counter
+    )
+    size: int = struct.calcsize(_LEVEL_METER_FORMAT)
+
+
 class SharedState:
     """Shared state using struct and shared memory.
 
@@ -95,19 +113,21 @@ class SharedState:
         self.playback_format = PlaybackStateFormat()
         self.recording_format = RecordingStateFormat()
         self.settings_format = AudioSettingsFormat()
+        self.level_meter_format = LevelMeterFormat()
 
         # Calculate total size needed
         self.total_size = (self.playback_format.size +
                           self.recording_format.size +
-                          self.settings_format.size)
+                          self.settings_format.size +
+                          self.level_meter_format.size)
 
         # Offsets for each structure
         self.playback_offset = 0
         self.recording_offset = self.playback_format.size
         self.settings_offset = self.recording_offset + self.recording_format.size
+        self.level_meter_offset = self.settings_offset + self.settings_format.size
 
         if create:
-            # Create new shared memory
             self.shm = shared_memory.SharedMemory(create=True, size=self.total_size)
             # Initialize with zeros to catch initialization bugs
             playback_defaults = struct.pack(self.playback_format.format,
@@ -125,10 +145,19 @@ class SharedState:
                                           0,      # format_type
                                           0,      # reserved
                                           0)      # update_counter
+            # Level meter defaults
+            level_meter_defaults = struct.pack(self.level_meter_format.format,
+                                             SHARED_STATUS_INVALID,         # status
+                                             AudioConstants.MIN_DB_LEVEL,   # rms_db
+                                             AudioConstants.MIN_DB_LEVEL,   # peak_db
+                                             AudioConstants.MIN_DB_LEVEL,   # peak_hold_db
+                                             0.0,                           # update_time
+                                             0)                             # frame_count
             # Write packed data to buffer
             self.shm.buf[self.playback_offset:self.playback_offset + self.playback_format.size] = playback_defaults
             self.shm.buf[self.recording_offset:self.recording_offset + self.recording_format.size] = recording_defaults
             self.shm.buf[self.settings_offset:self.settings_offset + self.settings_format.size] = settings_defaults
+            self.shm.buf[self.level_meter_offset:self.level_meter_offset + self.level_meter_format.size] = level_meter_defaults
         else:
             # Will attach later with attach_to_existing()
             self.shm = None
@@ -368,4 +397,78 @@ class SharedState:
             bit_depth=bit_depth,
             channels=channels,
             format_type=format_type
+        )
+
+    # Level meter methods
+    def set_level_meter_state(self, **kwargs) -> None:
+        """Set level meter state fields.
+
+        Args:
+            **kwargs: Keyword arguments for level meter state fields:
+                - status: Level meter status
+                - rms_db: RMS level in dB
+                - peak_db: Peak level in dB
+                - peak_hold_db: Peak hold level in dB
+                - update_time: Update timestamp
+                - frame_count: Frame counter
+        """
+        # Get current values
+        current = self.get_level_meter_state()
+
+        # Update with new values
+        values = []
+        for field in self.level_meter_format.fields:
+            if field in kwargs:
+                values.append(kwargs[field])
+            else:
+                values.append(current[field])
+
+        # Pack and write
+        data = struct.pack(self.level_meter_format.format, *values)
+        self.shm.buf[self.level_meter_offset:self.level_meter_offset + self.level_meter_format.size] = data
+
+    def get_level_meter_state(self) -> dict:
+        """Get current level meter state.
+
+        Returns:
+            Dictionary with all level meter state fields
+        """
+        data = bytes(self.shm.buf[self.level_meter_offset:self.level_meter_offset + self.level_meter_format.size])
+        values = struct.unpack(self.level_meter_format.format, data)
+        return dict(zip(self.level_meter_format.fields, values))
+
+    def update_level_meter(self, rms_db: float, peak_db: float,
+                          peak_hold_db: float, frame_count: int) -> None:
+        """Update level meter values.
+
+        Args:
+            rms_db: RMS level in dB
+            peak_db: Peak level in dB
+            peak_hold_db: Peak hold level in dB
+            frame_count: Current frame count
+        """
+        self.set_level_meter_state(
+            status=SETTINGS_STATUS_VALID,  # Reuse settings status for simplicity
+            rms_db=rms_db,
+            peak_db=peak_db,
+            peak_hold_db=peak_hold_db,
+            update_time=time.time(),
+            frame_count=frame_count
+        )
+
+    def reset_level_meter(self) -> None:
+        """Reset level meter values to minimum and bump frame counter.
+
+        Keeps status valid so UI accepts update. Increments frame_count to
+        ensure UI detects a change regardless of its local cache.
+        """
+        current = self.get_level_meter_state()
+        next_frame = int(current.get('frame_count', 0)) + 1
+        self.set_level_meter_state(
+            status=SETTINGS_STATUS_VALID,
+            rms_db=AudioConstants.MIN_DB_LEVEL,
+            peak_db=AudioConstants.MIN_DB_LEVEL,
+            peak_hold_db=AudioConstants.MIN_DB_LEVEL,
+            update_time=time.time(),
+            frame_count=next_frame
         )

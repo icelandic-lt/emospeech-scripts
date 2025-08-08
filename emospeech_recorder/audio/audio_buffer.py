@@ -1,7 +1,7 @@
 """Shared memory audio buffer for synchronized playback and recording.
 
 This module provides a shared memory implementation for audio data that can be
-accessed by multiple processes with minimal overhead.
+accessed by multiple processes.
 """
 
 import numpy as np
@@ -43,11 +43,8 @@ class AudioBuffer:
         buffer.shape = audio_data.shape
         buffer.dtype = audio_data.dtype
 
-        # Calculate size needed
-        nbytes = audio_data.nbytes
-
         # Create shared memory
-        buffer.shm = shared_memory.SharedMemory(create=True, size=nbytes)
+        buffer.shm = shared_memory.SharedMemory(create=True, size=audio_data.nbytes)
         buffer.name = buffer.shm.name
 
         # Copy data to shared memory
