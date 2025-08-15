@@ -1,4 +1,4 @@
-"""Constants for the EmoSpeech Recorder application.
+"""Constants for the Revoxx Recorder application.
 
 This module defines all constant values used throughout the application,
 organized into logical groups for audio processing, user interface,

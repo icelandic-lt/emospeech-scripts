@@ -1,4 +1,4 @@
-"""State management for the EmoSpeech Recorder."""
+"""State management for Revoxx."""
 
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List, Tuple

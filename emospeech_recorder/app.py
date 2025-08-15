@@ -1,4 +1,4 @@
-"""Main application for the EmoSpeech Recorder."""
+"""Main application for Revoxx."""
 
 # Set matplotlib backend before any matplotlib imports
 import matplotlib
@@ -40,8 +40,8 @@ from .audio.buffer_manager import BufferManager
 from .audio.shared_state import SharedState
 
 
-class EmoSpeechRecorder:
-    """Main application class for the EmoSpeech Recorder.
+class Revoxx:
+    """Main application class for Revoxx.
 
     This class manages the entire recording application, coordinating between
     the UI, audio recording/playback processes, and file management. It handles
@@ -248,7 +248,7 @@ class EmoSpeechRecorder:
 
                 # Set the application name
                 from Foundation import NSProcessInfo
-                NSProcessInfo.processInfo().setValue_forKey_('EmoSpeech Recorder', 'processName')
+                NSProcessInfo.processInfo().setValue_forKey_('Revoxx', 'processName')
             except ImportError:
                 # PyObjC not available, try ctypes approach
                 try:
@@ -263,13 +263,13 @@ class EmoSpeechRecorder:
 
                     # Set process name using low-level approach
                     libc = ctypes.CDLL('/usr/lib/libc.dylib')
-                    title = b'EmoSpeech Recorder\0'
+                    title = b'Revoxx\0'
                     libc.setproctitle(title)
                 except Exception:
                     pass
 
-        self.root = tk.Tk(className='EmoSpeech Recorder')
-        self.root.title("EmoSpeech Recorder")
+        self.root = tk.Tk(className='Revoxx')
+        self.root.title("Revoxx")
 
         # macOS: Route the standard application "Quit" (CMD+Q) to our central _quit()
         if platform.system() == 'Darwin':
@@ -1468,7 +1468,7 @@ def parse_audio_device(device_str: str) -> Optional[int]:
 
 
 def main() -> None:
-    """Main entry point for the EmoSpeech Recorder application.
+    """Main entry point for the Revoxx application.
 
     Sets up multiprocessing for macOS compatibility, parses command line
     arguments, creates configuration, and launches the recorder application.
@@ -1536,7 +1536,7 @@ def main() -> None:
     recording_dir = Path(args.recdir)
 
     # Create and run application
-    app = EmoSpeechRecorder(config, script_file, recording_dir, debug=args.debug)
+    app = Revoxx(config, script_file, recording_dir, debug=args.debug)
 
     # Set starting index
     app.state.recording.current_index = args.start_idx

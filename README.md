@@ -1,6 +1,6 @@
-# Icelandic EmoSpeech
+# Revoxx - Professional Speech Recording Application
 
-This repository provides scripts for recording and post-processing of emotional speech datasets.
+This repository provides a professional speech recording application and scripts for recording and post-processing of speech datasets.
 
 ![Version](https://img.shields.io/badge/Version-master-darkgreen)
 ![Python](https://img.shields.io/badge/python-3.9-blue?logo=python&logoColor=white)
@@ -29,13 +29,16 @@ This project has been created by the [Language and Voice Lab](https://lvl.ru.is/
 
 ## Description
 
-This project has been used to create [Talrómur 3](https://repository.clarin.is/repository/xmlui/handle/20.500.12537/344), the Icelandic emotional speech dataset. You can use this project to create voice recordings, be it emotional recordings or neutral recordings in combination with a workstation/laptop and appropriate audio recording equipment. We used OS-X for our recordings, but it should as well work on Linux and Windows.
+This project has been used to create [Talrómur 3](https://repository.clarin.is/repository/xmlui/handle/20.500.12537/344), the Icelandic emotional speech dataset. You can use this project to create voice recordings (emotional or neutral) on a workstation/laptop with suitable audio equipment. We used macOS for our recordings; Linux and Windows should also work.
 
-The recordings are done with the Python script [rec.py](rec.py) that prints the utterance text with big letters on a text window and reacts to certain keys of a keyboard to quickly record the utterance, to play it, or navigate to the previous or next utterance. The same utterance can also be rerecorded any number of times. All recordings are saved to the directory given on command line. Although a bit raw, this script is an effective way to collect a new voice corpus quickly, given the appropriate equipment and a recording studio is available.
+There are now two ways to record:
+
+- Graphical Recorder (recommended): Revoxx GUI with real-time Mel-Spectrogram and LED-Level-Meter.
+- CLI Recorder (legacy): `rec.py`
 
 Following the recording of the raw audio files, we provide the script [organize_voice.py](organize_voice.py), to convert the raw recordings into a complete voice dataset that can be used for training a TTS voice model. If certain conventions are used for the directory names of the voice recordings, e.g. multiple recordings with the same voice but different styles, emotions, etc., then these can be combined into the same voice dataset and also be losslessly converted into the FLAC format to save disk space.
 
-Additionally, we provide an experimental script [vadiate.py](vadiate.py) that uses voice activity detection (VAD) to generate a list of voice activity timings for each dataset. This can be used, to e.g. surgically cut the beginning and end of a dataset recording to eliminate silence, or to split a recording into multiple pieces. The detection is mostly accurate, but for some strong emotions in combination with short utterances, voice activity is sometimes not detected correctly. 
+Additionally, we provide an experimental script [vadiate.py](vadiate.py) that uses voice activity detection (VAD) to generate a list of voice activity timings for each dataset. This can be used, to e.g. surgically cut the beginning and end of a dataset recording to eliminate silence, or to split a recording into multiple pieces. The detection is mostly accurate, but for some strong emotions in combination with short utterances, voice activity is sometimes not detected correctly.
 
 
 ## Installation
@@ -89,9 +92,9 @@ You can analyze the values of a given script by just providing the script file a
 
 You can also only generate the numeric values on stdout by not providing the `--output` and `--script` parameters.
 
-The parameter `--plot` is always optional and plots the distribution of the analyzed/generated emotion values. 
+The parameter `--plot` is always optional and plots the distribution of the analyzed/generated emotion values.
 
-## Record dataset 
+## Record dataset (CLI – Alternative)
 
 The script [rec.py](rec.py) is used for recording the raw voice samples. It takes the following parameters:
 

@@ -1,4 +1,4 @@
-"""Application icon creation for EmoSpeech Recorder."""
+"""Application icon creation for Revoxx."""
 
 import tkinter as tk
 from typing import Optional

@@ -1,4 +1,4 @@
-"""Main window UI for the EmoSpeech Recorder."""
+"""Main window UI for the Revoxx Recorder."""
 
 from typing import Optional, Callable
 import tkinter as tk
@@ -18,7 +18,7 @@ from .menus.audio_devices import AudioDevicesMenuBuilder
 
 
 class MainWindow:
-    """Main application window for the EmoSpeech Recorder.
+    """Main application window for the Revoxx Recorder.
 
     This class manages the main UI window, including layout, widget creation,
     font scaling, and window resizing. It provides a three-panel layout:
@@ -199,7 +199,7 @@ class MainWindow:
         self.root.minsize(800, 600)
 
         # Window properties
-        self.root.title("EmoSpeech Recorder")
+        self.root.title("Revoxx")
         self.root.resizable(True, True)
         self.root.configure(bg=UIConstants.COLOR_BACKGROUND)
 
@@ -408,15 +408,13 @@ GENERAL:
     def _show_about(self) -> None:
         """Show about dialog."""
         about_window = tk.Toplevel(self.root)
-        about_window.title("About EmoSpeech Recorder")
+        about_window.title("About Revoxx")
         about_window.geometry("400x200")
         about_window.resizable(False, False)
 
-        about_text = """EmoSpeech Recorder
+        about_text = """Revoxx Recorder
 
-A professional tool for recording emotional speech datasets.
-
-Used to create Talrómur 3, the Icelandic emotional speech dataset."""
+A tool for recording (emotional) speech datasets."""
 
         label = tk.Label(about_window, text=about_text, justify=tk.CENTER,
                         padx=20, pady=20)

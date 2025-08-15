@@ -1,6 +1,6 @@
 """Audio processors module.
 
-This module provides audio processing components for the EmoSpeech Recorder.
+This module provides audio processing components for the Revoxx Recorder.
 """
 
 from .processor_base import AudioProcessor

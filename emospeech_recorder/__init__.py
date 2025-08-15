@@ -1,4 +1,4 @@
-"""EmoSpeech Recorder - A tool for recording emotional speech with real-time feedback."""
+"""Revoxx Recorder - A tool for recording emotional speech with real-time feedback."""
 
 __version__ = "2.0.0"
 __author__ = "Grammatek"
@@ -11,7 +11,7 @@ def main():
     from .app import main as app_main
     app_main()
 
-# Lazy import for EmoSpeechRecorder
+# Lazy import for Revoxx
 def __getattr__(name):
     if name == 'EmoSpeechRecorder':
         from .app import EmoSpeechRecorder

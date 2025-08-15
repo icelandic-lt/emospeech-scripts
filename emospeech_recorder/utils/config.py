@@ -1,4 +1,4 @@
-"""Configuration management for the EmoSpeech Recorder.
+"""Configuration management for the Revoxx Recorder.
 
 This module provides dataclass-based configuration management with
 JSON serialization support. Configurations are organized hierarchically
