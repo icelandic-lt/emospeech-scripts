@@ -52,6 +52,9 @@ class AudioPlayer:
         # Level calculator for meter updates
         self.level_calculator = LevelCalculator(config.sample_rate)
 
+    def set_output_device(self, index: Optional[int]) -> None:
+        """Update output device index used for future streams."""
+        self.config.output_device = index
 
     def start_playback(self, audio_data: np.ndarray, sample_rate: int, audio_buffer: AudioBuffer) -> None:
         """Start playback.
@@ -83,15 +86,48 @@ class AudioPlayer:
         self.shared_state.update_playback_position(0, 0.0)
 
         # Create output stream with callback
-        self.stream = sd.OutputStream(
-            samplerate=sample_rate,
-            blocksize=self.blocksize,
-            device=self.config.output_device,
-            channels=1,  # Only mono is supported
-            dtype='float32',  # Always use float32 for sounddevice
-            callback=self._audio_callback,
-            finished_callback=self._finished_callback
-        )
+        # Optional routing to a specific physical output channel: we emulate mapping
+        # by opening a stream with enough channels and writing only to the target one.
+        output_mapping = getattr(self, '_output_channel_mapping', None)
+        target_channel_index = 0
+        num_stream_channels = 1
+        if isinstance(output_mapping, list) and len(output_mapping) == 1:
+            try:
+                target_channel_index = int(output_mapping[0])
+                num_stream_channels = max(1, target_channel_index + 1)
+            except Exception:
+                target_channel_index = 0
+                num_stream_channels = 1
+
+        # Store for callback use
+        self._playback_output_channel_index = target_channel_index
+
+        # Open stream with fallback to default device
+        try:
+            self.stream = sd.OutputStream(
+                samplerate=sample_rate,
+                blocksize=self.blocksize,
+                device=self.config.output_device,
+                channels=num_stream_channels,
+                dtype='float32',  # Always use float32 for sounddevice
+                callback=self._audio_callback,
+                finished_callback=self._finished_callback
+            )
+        except (sd.PortAudioError, OSError) as e:
+            try:
+                self.stream = sd.OutputStream(
+                    samplerate=sample_rate,
+                    blocksize=self.blocksize,
+                    device=None,
+                    channels=num_stream_channels,
+                    dtype='float32',
+                    callback=self._audio_callback,
+                    finished_callback=self._finished_callback
+                )
+            except (sd.PortAudioError, OSError) as e:
+                print(f"Error opening OutputStream: {e}")
+                self._stop_requested = True
+                return
         self.stream.start()
 
     def stop_playback(self) -> None:
@@ -156,7 +192,13 @@ class AudioPlayer:
                 audio_chunk = self.audio_data[
                     self.current_position:self.current_position + to_copy
                 ]
-                outdata[:to_copy, 0] = audio_chunk
+                out_channel_index = getattr(self, '_playback_output_channel_index', 0)
+                # Only clear buffer if using multi-channel output
+                if outdata.shape[1] > 1:
+                    outdata.fill(0)
+                # Guard channel index within bounds
+                if 0 <= out_channel_index < outdata.shape[1]:
+                    outdata[:to_copy, out_channel_index] = audio_chunk
 
                 # Calculate and update level meter
                 if to_copy > 0:
@@ -222,6 +264,7 @@ def playback_process(config: AudioConfig,
         config: Audio configuration
         control_queue: Queue for control commands
         shared_state_name: Name of shared memory block
+        shutdown_event: End Playback process ?
     """
     player = None
     attached_buffer: Optional[AudioBuffer] = None
@@ -269,6 +312,24 @@ def playback_process(config: AudioConfig,
 
                 elif action == 'quit':
                     break
+
+                elif action == 'set_output_device':
+                    value = command.get('index', None)
+                    if isinstance(value, int):
+                        player.set_output_device(value)
+                    elif value is None:
+                        player.set_output_device(None)
+
+                elif action == 'set_output_channel_mapping':
+                    mapping = command.get('mapping', None)
+                    try:
+                        if isinstance(mapping, list):
+                            mapping = [int(x) for x in mapping]
+                            player._output_channel_mapping = mapping
+                        else:
+                            player._output_channel_mapping = None
+                    except Exception:
+                        player._output_channel_mapping = None
 
                 else:
                     print(f"Warning: Unsupported action: {action}")

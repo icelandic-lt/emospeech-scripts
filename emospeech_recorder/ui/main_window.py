@@ -14,6 +14,7 @@ from .info_overlay import InfoOverlay
 from .level_meter import RecordingStandard
 from .level_meter.led_level_meter import LEDLevelMeter
 from .level_meter.config import RECORDING_STANDARDS, LevelMeterConfig
+from .menus.audio_devices import AudioDevicesMenuBuilder
 
 
 class MainWindow:
@@ -308,6 +309,28 @@ class MainWindow:
                 value=depth,
                 command=lambda d=depth: self._on_bit_depth_change(d)
             )
+
+        # Device submenu (after Audio)
+        def _call_app(name: str, idx: int) -> None:
+            try:
+                cb = self.app_callbacks.get(name)
+                if cb:
+                    cb(idx)
+            except Exception:
+                pass
+
+        self.audio_devices_menu = AudioDevicesMenuBuilder(
+            settings_menu,
+            on_select_input=lambda idx: _call_app('set_input_device', idx),
+            on_select_output=lambda idx: _call_app('set_output_device', idx),
+            on_select_input_channels=lambda m: _call_app('set_input_channel_mapping', m),
+            on_select_output_channels=lambda m: _call_app('set_output_channel_mapping', m),
+            initial_input_index=self.config.audio.input_device,
+            initial_output_index=self.config.audio.output_device,
+            initial_input_mapping=getattr(self.settings_manager.settings, 'input_channel_mapping', None),
+            initial_output_mapping=getattr(self.settings_manager.settings, 'output_channel_mapping', None),
+            debug=bool(self.manager_dict.get('debug', False)),
+        )
 
         # Level Meter Preset submenu
         level_meter_menu = tk.Menu(settings_menu, tearoff=0)

@@ -26,6 +26,13 @@ from .utils.state import AppState
 from .utils.file_manager import RecordingFileManager, ScriptFileManager
 from .utils.settings_manager import SettingsManager
 from .ui.main_window import MainWindow
+from .utils.audio_devices import (
+    list_input_devices,
+    list_output_devices,
+    get_device_name_by_index,
+    get_default_device_indices,
+    refresh_devices_backend,
+)
 from .audio.recorder import record_process
 from .audio.player import playback_process
 from .audio.audio_buffer import AudioBuffer
@@ -68,6 +75,13 @@ class EmoSpeechRecorder:
         self.script_file = script_file
         self.recording_dir = recording_dir
         self.debug = debug
+
+        # Track default-device notifications
+        self._default_input_in_effect = False
+        self._default_output_in_effect = False
+        self._notified_default_input = False
+        self._notified_default_output = False
+        self.last_output_error = False
 
         # Initialize settings manager
         self.settings_manager = SettingsManager()
@@ -124,6 +138,43 @@ class EmoSpeechRecorder:
         self.config.audio.bit_depth = settings.bit_depth
         self.config.audio.sync_response_time_ms = settings.audio_sync_response_time_ms
         self.config.audio.__post_init__()  # Update dtype and subtype
+
+        # Restore preferred devices by name if possible, but only if not set via CLI
+        try:
+            # Input device
+            if self.config.audio.input_device is None:
+                restored = False
+                if settings.input_device is not None:
+                    name = settings.input_device
+                    for dev in list_input_devices():
+                        if dev['name'] == name:
+                            self.config.audio.input_device = dev['index']
+                            restored = True
+                            break
+                # If not restored, we will use system default
+                self._default_input_in_effect = not restored
+            else:
+                self._default_input_in_effect = False
+
+            # Output device
+            if self.config.audio.output_device is None:
+                restored = False
+                if settings.output_device is not None:
+                    name = settings.output_device
+                    for dev in list_output_devices():
+                        if dev['name'] == name:
+                            self.config.audio.output_device = dev['index']
+                            restored = True
+                            break
+                self._default_output_in_effect = not restored
+            else:
+                self._default_output_in_effect = False
+        except Exception:
+            # On any error, fall back silently, treat as default in effect
+            if self.config.audio.input_device is None:
+                self._default_input_in_effect = True
+            if self.config.audio.output_device is None:
+                self._default_output_in_effect = True
 
         # Display settings
         self.config.display.show_spectrogram = settings.show_spectrogram
@@ -235,6 +286,10 @@ class EmoSpeechRecorder:
             'toggle_monitoring': self._toggle_monitoring,
             'update_audio_settings': self._update_audio_settings,
             'update_info_overlay': self._update_info_overlay,
+            'set_input_device': self._set_input_device,
+            'set_output_device': self._set_output_device,
+            'set_input_channel_mapping': self._set_input_channel_mapping,
+            'set_output_channel_mapping': self._set_output_channel_mapping,
             'quit': self._quit
         }
 
@@ -422,6 +477,29 @@ class EmoSpeechRecorder:
                 is_monitoring=(mode == 'monitoring')
             )
 
+        # If default input device is in effect and not yet notified, inform user once
+        if self._default_input_in_effect and not self._notified_default_input:
+            try:
+                self.window.show_message("Using system default input device (no saved/available selection)")
+            except Exception:
+                pass
+            self._notified_default_input = True
+
+        # Preflight: quick rescan and availability check
+        try:
+            refresh_devices_backend()
+        except Exception:
+            pass
+
+        # Verify selected input device still exists (if set)
+        if self.config.audio.input_device is not None:
+            available = [d['index'] for d in list_input_devices()]
+            if self.config.audio.input_device not in available:
+                # Device missing → message and fallback to default for this run
+                self.window.set_status("Selected input device not found. Using system default.")
+                # Do not change persisted selection; just let record process try with None
+                self.record_queue.put({'action': 'set_input_device', 'index': None})
+
         # Start audio capture
         self.record_queue.put({'action': 'start'})
 
@@ -540,6 +618,35 @@ class EmoSpeechRecorder:
 
         current_label = self.state.recording.current_label
         current_take = self.state.recording.get_current_take(current_label)
+
+        # If default output device is in effect and not yet notified, inform user once
+        if self._default_output_in_effect and not self._notified_default_output:
+            try:
+                self.window.show_message("Using system default output device (no saved/available selection)")
+            except Exception:
+                pass
+            self._notified_default_output = True
+
+        # Additionally, warn once if last stream open failed or device likely unavailable
+        if hasattr(self, 'last_output_error') and self.last_output_error:
+            self.window.set_status("Output device unavailable. Using system default if possible.")
+            self.last_output_error = False
+
+        # Quick rescan before playback
+        try:
+            refresh_devices_backend()
+        except Exception:
+            pass
+
+        # Verify selected output device still exists (if set)
+        if self.config.audio.output_device is not None:
+            available = [d['index'] for d in list_output_devices()]
+            if self.config.audio.output_device not in available:
+                self.window.set_status("Selected output device not found. Using system default.")
+                try:
+                    self.playback_queue.put({'action': 'set_output_device', 'index': None}, block=False)
+                except Exception:
+                    pass
 
         # Hardware synchronized playback
         filepath = self.file_manager.get_recording_path(current_label, current_take)
@@ -898,6 +1005,79 @@ class EmoSpeechRecorder:
             channels=self.config.audio.channels,
             format_type=format_type
         )
+
+    def _set_input_device(self, index: int) -> None:
+        """Set preferred input device by index and persist by name.
+
+        Effect will apply to next (re)start of input streams.
+        """
+        try:
+            self.config.audio.input_device = index
+            name = get_device_name_by_index(index)
+            if name:
+                self.settings_manager.update_setting('input_device', name)
+            self.window.set_status(f"Input device set to #{index}: {name or 'Unknown'}")
+            # Since a specific device was chosen, default is no longer in effect
+            self._default_input_in_effect = False
+            self._notified_default_input = False
+            # Propagate to recorder process for future recordings
+            try:
+                self.record_queue.put({'action': 'set_input_device', 'index': index}, block=False)
+            except Exception:
+                pass
+        except Exception as e:
+            self.window.set_status(f"Failed to set input device: {e}")
+
+    def _set_input_channel_mapping(self, mapping: Optional[list]) -> None:
+        """Set custom input channel mapping (None means device default)."""
+        try:
+            # Persist
+            self.settings_manager.update_setting('input_channel_mapping', mapping)
+            # No immediate restart; applies on next recording/monitoring start
+            label = "Device default" if mapping is None else f"Input channels: {[m+1 for m in mapping]}"
+            self.window.set_status(label)
+        except Exception as e:
+            self.window.set_status(f"Failed to set input channels: {e}")
+        # Propagate mapping to record process
+        try:
+            self.record_queue.put({'action': 'set_input_channel_mapping', 'mapping': mapping}, block=False)
+        except Exception:
+            pass
+
+    def _set_output_device(self, index: int) -> None:
+        """Set preferred output device by index and persist by name.
+
+        Effect will apply to next (re)start of output streams.
+        """
+        try:
+            self.config.audio.output_device = index
+            name = get_device_name_by_index(index)
+            if name:
+                self.settings_manager.update_setting('output_device', name)
+            self.window.set_status(f"Output device set to #{index}: {name or 'Unknown'}")
+            self._default_output_in_effect = False
+            self._notified_default_output = False
+            # Propagate to playback process for future playback
+            try:
+                self.playback_queue.put({'action': 'set_output_device', 'index': index}, block=False)
+            except Exception:
+                pass
+        except Exception as e:
+            self.window.set_status(f"Failed to set output device: {e}")
+
+    def _set_output_channel_mapping(self, mapping: Optional[list]) -> None:
+        """Set custom output channel mapping for mono playback (None means default)."""
+        try:
+            self.settings_manager.update_setting('output_channel_mapping', mapping)
+            label = "Device default" if mapping is None else f"Output channel: {mapping[0]+1 if mapping else ''}"
+            self.window.set_status(label)
+        except Exception as e:
+            self.window.set_status(f"Failed to set output channels: {e}")
+        # Propagate mapping to playback process
+        try:
+            self.playback_queue.put({'action': 'set_output_channel_mapping', 'mapping': mapping}, block=False)
+        except Exception:
+            pass
 
 
     def _delete_current_recording(self) -> None:

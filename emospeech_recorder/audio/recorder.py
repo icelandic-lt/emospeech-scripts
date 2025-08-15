@@ -24,16 +24,19 @@ class AudioRecorder:
     """Audio recorder with struct-based synchronized position updates."""
 
     def __init__(self, config: AudioConfig, shared_state_name: str,
-                 audio_queue: Optional[mp.Queue] = None):
+                 audio_queue: Optional[mp.Queue] = None,
+                 manager_dict: Optional[dict] = None):
         """Initialize synchronized audio recorder.
 
         Args:
             config: Audio configuration
             shared_state_name: Name of shared memory block
             audio_queue: Optional queue for sending audio to visualization
+            manager_dict: Shared manager dict
         """
         self.config = config
         self.audio_queue = audio_queue
+        self.manager_dict = manager_dict
 
         # Attach to existing shared state
         self.shared_state = SharedState(create=False)
@@ -54,13 +57,21 @@ class AudioRecorder:
             config.sample_rate
         )
 
-    def start_recording(self) -> None:
-        """Start synchronized recording."""
+    def set_input_device(self, index: Optional[int]) -> None:
+        """Update input device index used for future streams."""
+        self.config.input_device = index
+
+    def start_recording(self) -> bool:
+        """Start synchronized recording.
+
+        Returns:
+            bool: True if stream started successfully, False otherwise
+        """
         # First check recording state
         recording_state = self.shared_state.get_recording_state()
         if recording_state.get('status', 0) == SHARED_STATUS_INVALID:
             print("ERROR: Recording state not initialized", file=sys.stderr)
-            return
+            return False
 
         # Read current audio settings from shared state
         settings = self.shared_state.get_audio_settings()
@@ -69,7 +80,7 @@ class AudioRecorder:
         if settings.get('status', 0) == SHARED_STATUS_INVALID:
             print("ERROR: Audio settings not initialized (invalid status)", file=sys.stderr)
             print(f"ERROR: Settings: {settings}", file=sys.stderr)
-            return
+            return False
 
         sample_rate = settings['sample_rate']
 
@@ -93,16 +104,98 @@ class AudioRecorder:
         self.shared_state.start_recording(sample_rate)
 
         # Create input stream with callback
-        self.stream = sd.InputStream(
-            samplerate=sample_rate,
-            blocksize=self.blocksize,
-            device=self.config.input_device,
-            channels=self.config.channels,
-            dtype=self.config.dtype,
-            callback=self._audio_callback
-        )
+        # Support optional input mapping by opening enough channels and selecting in callback
+        input_mapping = getattr(self, '_input_channel_mapping', None)
+        # Determine available input channels on current device (best-effort)
+        max_in_ch = None
+        try:
+            dev_info = sd.query_devices(self.config.input_device) if self.config.input_device is not None else sd.query_devices(None)
+            max_in_ch = int(dev_info.get('max_input_channels', 0)) if isinstance(dev_info, dict) else None
+        except (sd.PortAudioError, ValueError, TypeError, AttributeError):
+            pass
+
+        if isinstance(input_mapping, list) and len(input_mapping) > 0:
+            # Filter mapping to available channels if known
+            if max_in_ch is not None:
+                filtered = [int(i) for i in input_mapping if 0 <= int(i) < max_in_ch]
+            else:
+                filtered = [int(i) for i in input_mapping]
+            if len(filtered) == 0:
+                # Fallback to default behavior
+                self._input_channel_pick = None
+                open_channels = self.config.channels
+            else:
+                self._input_channel_pick = filtered
+                open_channels = min(len(filtered), max_in_ch) if max_in_ch is not None else len(filtered)
+        else:
+            open_channels = min(self.config.channels, max_in_ch) if (max_in_ch is not None and max_in_ch > 0) else self.config.channels
+            self._input_channel_pick = None
+
+        # Create input stream with fallback to default device if needed
+        try:
+            self.stream = sd.InputStream(
+                samplerate=sample_rate,
+                blocksize=self.blocksize,
+                device=self.config.input_device,
+                channels=open_channels,
+                dtype=self.config.dtype,
+                callback=self._audio_callback,
+            )
+        except (sd.PortAudioError, OSError):
+            # Try default system input device
+            try:
+                self.stream = sd.InputStream(
+                    samplerate=sample_rate,
+                    blocksize=self.blocksize,
+                    device=None, # i.e. System-Default
+                    channels=open_channels,
+                    dtype=self.config.dtype,
+                    callback=self._audio_callback,
+                )
+            except (sd.PortAudioError, OSError) as e:
+                print(f"Error opening InputStream: {e}", file=sys.stderr)
+                self.is_recording = False
+                # Signal to main process
+                if self.manager_dict is not None:
+                    try:
+                        self.manager_dict['last_input_error'] = str(e)
+                    except (KeyError, TypeError):
+                        pass
+                return False
 
         self.stream.start()
+        return True
+
+    def _process_input_channels(self, indata: np.ndarray) -> np.ndarray:
+        """Process input data according to channel mapping configuration.
+
+        Args:
+            indata: Raw input data from audio callback
+
+        Returns:
+            Processed audio data with appropriate channel selection/mixing
+        """
+        if not hasattr(self, '_input_channel_pick') or not self._input_channel_pick:
+            return indata.copy()
+
+        # Guard indices vs delivered channel count
+        available = indata.shape[1] if indata.ndim == 2 else 1
+        safe_indices = [i for i in self._input_channel_pick if 0 <= i < available]
+
+        if len(safe_indices) == 0:
+            # Fallback to first available channels matching config.channels
+            if indata.ndim == 2 and available >= self.config.channels:
+                picked = indata[:, :self.config.channels]
+            else:
+                picked = indata
+        else:
+            picked = indata[:, safe_indices] if indata.ndim == 2 else indata
+
+        # If more than one channel selected for mono config, average to mono
+        if self.config.channels == 1 and picked.ndim == 2 and picked.shape[1] > 1:
+            picked = picked.mean(axis=1, keepdims=True).astype(indata.dtype)
+
+        return picked.copy()
 
     def stop_recording(self) -> np.ndarray:
         """Stop recording and return audio data."""
@@ -165,7 +258,16 @@ class AudioRecorder:
 
         if self.is_recording:
             # Store audio chunk
-            self.audio_chunks.append(indata.copy())
+            try:
+                processed_audio = self._process_input_channels(indata)
+                self.audio_chunks.append(processed_audio)
+            except (ValueError, MemoryError):
+                # On any channel/memory error, append zeros to keep timing consistent
+                try:
+                    zeros = np.zeros_like(indata)
+                    self.audio_chunks.append(zeros)
+                except MemoryError:
+                    pass
 
             # Update shared state with hardware timing
             self.shared_state.update_recording_position(
@@ -190,7 +292,7 @@ class AudioRecorder:
                 try:
                     self.audio_queue.put_nowait(indata.copy())
                 except queue.Full:
-                    pass  # Skip if queue is full
+                    pass
 
             # Update position
             self.current_position += frames
@@ -218,6 +320,7 @@ def record_process(config: AudioConfig,
         shared_state_name: Name of shared memory block
         control_queue: Queue for control commands
         manager_dict: Shared manager dict (for save_path compatibility)
+        shutdown_event: Signal for shutting down process
     """
     recorder = None
 
@@ -252,6 +355,28 @@ def record_process(config: AudioConfig,
 
                 elif action == 'quit':
                     break
+
+                elif action == 'set_input_device':
+                    # Update device index for future recordings
+                    value = command.get('index', None)
+                    if isinstance(value, int):
+                        recorder.set_input_device(value)
+                    elif value is None:
+                        recorder.set_input_device(None)
+
+                elif action == 'set_input_channel_mapping':
+                    # Update mapping for future recordings
+                    mapping = command.get('mapping', None)
+                    # Store on the recorder instance for future use
+                    try:
+                        if isinstance(mapping, list):
+                            # validate ints
+                            mapping = [int(x) for x in mapping]
+                            recorder._input_channel_mapping = mapping
+                        else:
+                            recorder._input_channel_mapping = None
+                    except (ValueError, TypeError):
+                        recorder._input_channel_mapping = None
 
                 else:
                     print(f"Warning: Unsupported action: {action}")

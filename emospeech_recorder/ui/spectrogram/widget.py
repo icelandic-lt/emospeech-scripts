@@ -211,7 +211,7 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
         self.canvas_widget.bind('<B3-Motion>', self._on_middle_drag)
         self.canvas_widget.bind('<ButtonRelease-3>', self._on_middle_release)
 
-    def _update_mel_processor_for_sample_rate(self, sample_rate: int) -> None:
+    def _update_mel_processor(self, sample_rate: int) -> None:
         """Update mel processor if sample rate has changed.
 
         Args:
@@ -295,7 +295,7 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
         self._clear_queue(self.audio_queue)
 
         # Update mel processor if sample rate has changed
-        self._update_mel_processor_for_sample_rate(sample_rate)
+        self._update_mel_processor(sample_rate)
 
         self.recording_handler.configure_for_sample_rate(sample_rate)
         self.frames_per_second = self.recording_handler.frames_per_second

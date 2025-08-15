@@ -17,6 +17,8 @@ class UserSettings:
     bit_depth: int = 24
     input_device: Optional[str] = None
     output_device: Optional[str] = None
+    input_channel_mapping: Optional[list] = None  # list of ints (0-based) or None for default
+    output_channel_mapping: Optional[list] = None  # list of ints (0-based) or None for default
     audio_sync_response_time_ms: float = 10.0
 
     # Display settings
