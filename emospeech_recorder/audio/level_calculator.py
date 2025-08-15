@@ -77,7 +77,7 @@ class LevelCalculator:
         Returns:
             Tuple of (rms_db, peak_db, peak_hold_db)
         """
-        # Normalize audio data first to ensure proper dB calculation
+        # Normalize audio data first to ensure correct dB calculation
         normalized_data = normalize_audio(audio_data)
 
         # Get mono signal for level calculation

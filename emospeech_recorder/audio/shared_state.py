@@ -136,7 +136,7 @@ class SharedState:
             recording_defaults = struct.pack(self.recording_format.format,
                                            SHARED_STATUS_INVALID,  # status
                                            0.0, 0, 0.0, 0)         # rest zeros
-            # Audio settings - all zeros to force proper initialization
+            # Audio settings - all zeros to force correct initialization
             settings_defaults = struct.pack(self.settings_format.format,
                                           SHARED_STATUS_INVALID,  # status
                                           0,      # sample_rate

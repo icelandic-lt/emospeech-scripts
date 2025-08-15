@@ -76,7 +76,7 @@ class AudioRecorder:
         # Read current audio settings from shared state
         settings = self.shared_state.get_audio_settings()
 
-        # Check if settings are properly initialized
+        # Check if settings are correctly initialized
         if settings.get('status', 0) == SHARED_STATUS_INVALID:
             print("ERROR: Audio settings not initialized (invalid status)", file=sys.stderr)
             print(f"ERROR: Settings: {settings}", file=sys.stderr)
@@ -223,7 +223,7 @@ class AudioRecorder:
         # Get current settings from shared state
         settings = self.shared_state.get_audio_settings()
 
-        # Check if settings are properly initialized
+        # Check if settings are correctly initialized
         if settings.get('status', 0) == SHARED_STATUS_INVALID:
             print("ERROR: Audio settings not initialized in save_recording (invalid status)", file=sys.stderr)
             return

@@ -179,7 +179,7 @@ class MelSpectrogramWidget(SpectrogramDisplayBase):
                 break
 
     def _initialize_spectrogram_display(self) -> None:
-        """Initialize the spectrogram display with empty data and proper axis limits."""
+        """Initialize the spectrogram display with empty data and correct axis limits."""
         initial_data = np.ones((self.adaptive_n_mels, self.spec_frames)) * AudioConstants.DB_MIN
         self.im = self._create_spectrogram_imshow(initial_data, self.adaptive_n_mels)
 
