@@ -20,8 +20,8 @@ class RecordingFileManager:
         recording_dir: Base directory for all recordings
 
     File Naming Convention:
-        Recordings are named as: {label}_{take_number}.wav
-        Example: t3_001_1.wav, t3_001_2.wav, etc.
+        Session structure: recordings/<utterance-id>/take_XXX.wav
+        Example: recordings/utt_001/take_001.wav, recordings/utt_001/take_002.wav
     """
 
     def __init__(self, recording_dir: Path):
@@ -31,7 +31,7 @@ class RecordingFileManager:
             recording_dir: Directory for storing recordings (created if not exists)
         """
         self.recording_dir = Path(recording_dir)
-        self.recording_dir.mkdir(exist_ok=True)
+        self.recording_dir.mkdir(exist_ok=True, parents=True)
 
     def get_recording_path(self, label: str, take: int) -> Path:
         """Get the path for a recording file.
@@ -43,15 +43,21 @@ class RecordingFileManager:
         Returns:
             Path: Full path to the recording file
         """
-        # Check if a WAV file already exists (for playback compatibility)
-        wav_filename = f"{label}_{take}{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}"
-        wav_path = self.recording_dir / wav_filename
+        # Session structure: recordings/<utterance-id>/take_XXX.wav
+        utterance_dir = self.recording_dir / label
+        utterance_dir.mkdir(exist_ok=True, parents=True)
+
+        # Format take number with leading zeros
+        take_str = f"{take:03d}"
+
+        # Check for existing files (FLAC or WAV)
+        wav_filename = f"take_{take_str}{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}"
+        wav_path = utterance_dir / wav_filename
         if wav_path.exists():
             return wav_path
 
-        # Otherwise return FLAC path (for new recordings)
-        filename = f"{label}_{take}{FileConstants.AUDIO_FILE_EXTENSION}"
-        return self.recording_dir / filename
+        flac_filename = f"take_{take_str}{FileConstants.AUDIO_FILE_EXTENSION}"
+        return utterance_dir / flac_filename
 
     def recording_exists(self, label: str, take: int) -> bool:
         """Check if a recording exists.
@@ -63,15 +69,17 @@ class RecordingFileManager:
         Returns:
             bool: True if the recording file exists
         """
-        # Check for FLAC first (new format)
-        flac_filename = f"{label}_{take}{FileConstants.AUDIO_FILE_EXTENSION}"
-        flac_path = self.recording_dir / flac_filename
-        if flac_path.exists():
-            return True
-        # Check for WAV (legacy format)
-        wav_filename = f"{label}_{take}{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}"
-        wav_path = self.recording_dir / wav_filename
-        return wav_path.exists()
+        # Session structure
+        utterance_dir = self.recording_dir / label
+        if not utterance_dir.exists():
+            return False
+
+        take_str = f"{take:03d}"
+        flac_filename = f"take_{take_str}{FileConstants.AUDIO_FILE_EXTENSION}"
+        wav_filename = f"take_{take_str}{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}"
+
+        return ((utterance_dir / flac_filename).exists() or
+                (utterance_dir / wav_filename).exists())
 
     def find_latest_take(self, label: str) -> int:
         """Find the latest take number for a label.
@@ -108,20 +116,24 @@ class RecordingFileManager:
             int: Highest take number found (0 if no recordings)
 
         Example:
-            If files exist: label_1.wav, label_3.wav, label_7.wav
+            If files exist: take_001.wav, take_003.wav, take_007.wav
             Returns: 7
         """
+        utterance_dir = self.recording_dir / label
+        if not utterance_dir.exists():
+            return 0
+
         # Check for both FLAC and WAV files
-        flac_pattern = f"{label}_*{FileConstants.AUDIO_FILE_EXTENSION}"
-        wav_pattern = f"{label}_*{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}"
-        files = list(self.recording_dir.glob(flac_pattern)) + list(self.recording_dir.glob(wav_pattern))
+        flac_pattern = f"take_*{FileConstants.AUDIO_FILE_EXTENSION}"
+        wav_pattern = f"take_*{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}"
+        files = list(utterance_dir.glob(flac_pattern)) + list(utterance_dir.glob(wav_pattern))
 
         highest = 0
         for file in files:
             # Extract take number from filename
             try:
-                # Filename format: label_take.wav
-                take_str = file.stem.split('_')[-1]
+                # Filename format: take_XXX.wav
+                take_str = file.stem.split('_')[1]
                 take = int(take_str)
                 highest = max(highest, take)
             except (ValueError, IndexError):
@@ -256,19 +268,23 @@ class RecordingFileManager:
             List[int]: Sorted list of existing take numbers
 
         Example:
-            If files exist: label_1.wav, label_3.wav, label_7.wav
+            If files exist: take_001.wav, take_003.wav, take_007.wav
             Returns: [1, 3, 7]
         """
+        utterance_dir = self.recording_dir / label
+        if not utterance_dir.exists():
+            return []
+
         # Check for both FLAC and WAV files
-        flac_pattern = f"{label}_*{FileConstants.AUDIO_FILE_EXTENSION}"
-        wav_pattern = f"{label}_*{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}"
-        files = list(self.recording_dir.glob(flac_pattern)) + list(self.recording_dir.glob(wav_pattern))
+        flac_pattern = f"take_*{FileConstants.AUDIO_FILE_EXTENSION}"
+        wav_pattern = f"take_*{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}"
+        files = list(utterance_dir.glob(flac_pattern)) + list(utterance_dir.glob(wav_pattern))
 
         existing_takes = []
         for file in files:
             try:
-                # Extract take number from filename: label_take.wav
-                take_str = file.stem.split('_')[-1]
+                # Extract take number from filename: take_XXX.wav
+                take_str = file.stem.split('_')[1]
                 take = int(take_str)
                 existing_takes.append(take)
             except (ValueError, IndexError):
@@ -301,31 +317,53 @@ class ScriptFileManager:
             Tuple[List[str], List[str]]: Lists of labels and utterances
 
         Raises:
-            FileNotFoundError: If the script file doesn't exist
+            FileNotFoundError: If script file doesn't exist
+            ValueError: If file format is invalid
         """
+        if not filepath:
+            raise FileNotFoundError("No script file specified")
+
         if not filepath.exists():
             raise FileNotFoundError(f"Script file not found: {filepath}")
 
-        with open(filepath) as f:
-            lines = f.readlines()
-
-        # Parse Festival data format: (label "utterance")
         labels = []
         utterances = []
 
-        for line in lines:
-            # Strip whitespace and parentheses
-            line = line.strip('( )\n')
-            if not line:
-                continue
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
 
-            # Split on first space followed by quote
-            parts = line.split(' "', 1)
-            if len(parts) == 2:
-                label = parts[0].strip()
-                utterance = parts[1].strip('"')
+                # Parse Festival format: (label "text")
+                if not line.startswith('(') or not line.endswith(')'):
+                    print(f"Warning: Skipping invalid line {line_num}: {line}")
+                    continue
+
+                # Remove parentheses
+                content = line[1:-1].strip()
+
+                # Find the label (first word)
+                parts = content.split(None, 1)
+                if len(parts) != 2:
+                    print(f"Warning: Skipping invalid line {line_num}: {line}")
+                    continue
+
+                label = parts[0]
+                text_part = parts[1].strip()
+
+                # Extract text from quotes
+                if text_part.startswith('"') and text_part.endswith('"'):
+                    text = text_part[1:-1]
+                else:
+                    print(f"Warning: Text not in quotes at line {line_num}: {line}")
+                    text = text_part
+
                 labels.append(label)
-                utterances.append(utterance)
+                utterances.append(text)
+
+        if not labels:
+            raise ValueError(f"No valid utterances found in {filepath}")
 
         return labels, utterances
 
@@ -335,42 +373,38 @@ class ScriptFileManager:
 
         Args:
             filepath: Output file path
-            labels: List of utterance labels/IDs
+            labels: List of utterance labels
             utterances: List of utterance texts
 
         Raises:
             ValueError: If labels and utterances have different lengths
         """
         if len(labels) != len(utterances):
-            raise ValueError("Labels and utterances must have same length")
+            raise ValueError("Labels and utterances must have the same length")
 
-        with open(filepath, 'w') as f:
-            for label, utterance in zip(labels, utterances):
-                f.write(f'({label} "{utterance}")\n')
-
-
-class ConfigFileManager:
-    """Manages configuration files.
-
-    This class handles loading and saving configuration files
-    for the recorder application. Configuration files are stored
-    in the user's home directory.
-    """
+        with open(filepath, 'w', encoding='utf-8') as f:
+            for label, text in zip(labels, utterances):
+                f.write(f'({label} "{text}")\n')
 
     @staticmethod
-    def get_default_config_path() -> Path:
-        """Get the default configuration file path.
+    def validate_script(filepath: Path) -> Tuple[bool, List[str]]:
+        """Validate a script file without fully loading it.
+
+        Args:
+            filepath: Path to script file
 
         Returns:
-            Path: Path to ~/.emospeech_recorder/config.json
+            Tuple[bool, List[str]]: (is_valid, list of error messages)
         """
-        return Path.home() / '.emospeech_recorder' / 'config.json'
+        errors = []
 
-    @staticmethod
-    def ensure_config_dir() -> None:
-        """Ensure configuration directory exists.
+        if not filepath.exists():
+            return False, ["Script file does not exist"]
 
-        Creates the ~/.emospeech_recorder directory if it doesn't exist.
-        """
-        config_dir = ConfigFileManager.get_default_config_path().parent
-        config_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            labels, utterances = ScriptFileManager.load_script(filepath)
+            if not labels:
+                errors.append("Script contains no valid utterances")
+            return len(errors) == 0, errors
+        except Exception as e:
+            return False, [str(e)]

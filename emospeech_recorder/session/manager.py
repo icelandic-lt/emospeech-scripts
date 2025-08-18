@@ -41,7 +41,7 @@ class SessionManager:
         gender: str,
         emotion: str,
         audio_config: SessionConfig,
-        script_source: Optional[Path] = None,
+        script_source: Path,
         custom_dir_name: Optional[str] = None
     ) -> Session:
         """Create a new session.
@@ -52,7 +52,7 @@ class SessionManager:
             gender: Gender (M/F/Other)
             emotion: Emotion being recorded
             audio_config: Audio configuration for the session
-            script_source: Optional path to script file to copy
+            script_source: Path to script file to copy (required)
             custom_dir_name: Optional custom directory name
 
         Returns:
@@ -60,6 +60,8 @@ class SessionManager:
 
         Raises:
             FileExistsError: If session directory already exists
+            FileNotFoundError: If script file doesn't exist
+            ValueError: If script file is invalid
         """
         # Generate directory name
         if custom_dir_name:
@@ -77,15 +79,22 @@ class SessionManager:
         if session_dir.exists():
             raise FileExistsError(f"Session directory already exists: {session_dir}")
 
+        # Validate script file
+        if not script_source:
+            raise ValueError("Script file is required for creating a session")
+        if not script_source.exists():
+            raise FileNotFoundError(f"Script file not found: {script_source}")
+        if not script_source.is_file():
+            raise ValueError(f"Script path is not a file: {script_source}")
+
         # Create directory structure
         session_dir.mkdir(parents=True)
         (session_dir / "recordings").mkdir()
         (session_dir / "trash").mkdir()
         (session_dir / "exports").mkdir()
 
-        # Copy script if provided
-        if script_source and script_source.exists():
-            shutil.copy(script_source, session_dir / self.SCRIPT_FILE)
+        # Copy script file (required)
+        shutil.copy(script_source, session_dir / self.SCRIPT_FILE)
 
         # Create session object
         speaker = SpeakerInfo(
@@ -107,8 +116,9 @@ class SessionManager:
         # Save session
         session.save()
 
-        # Update recent sessions
+        # Update recent sessions and default base dir
         self._add_to_recent_sessions(session_dir)
+        self.set_default_base_dir(base_dir)
 
         self.current_session = session
         return session
@@ -123,9 +133,10 @@ class SessionManager:
             Loaded session instance
 
         Raises:
-            FileNotFoundError: If session doesn't exist
+            FileNotFoundError: If session doesn't exist or script file is missing
             ValueError: If session is invalid
         """
+
         if not session_dir.exists():
             raise FileNotFoundError(f"Session directory not found: {session_dir}")
 
@@ -135,6 +146,11 @@ class SessionManager:
         # Check for .revoxx suffix
         if not session_dir.name.endswith(self.SUFFIX):
             raise ValueError(f"Not a valid session directory (missing {self.SUFFIX}): {session_dir}")
+
+        # Check for script file
+        script_path = session_dir / self.SCRIPT_FILE
+        if not script_path.exists():
+            raise FileNotFoundError(f"Required script file not found in session: {script_path}")
 
         session = Session.load(session_dir)
 
@@ -252,10 +268,10 @@ class SessionManager:
                 result['warnings'].append(f"Missing {subdir} directory")
 
         # Check script file
-        if session.script_path:
-            script_file = session_dir / session.script_path
-            if not script_file.exists():
-                result['warnings'].append(f"Script file not found: {session.script_path}")
+        script_file = session_dir / self.SCRIPT_FILE
+        if not script_file.exists():
+            result['valid'] = False
+            result['errors'].append(f"Required script file not found: {self.SCRIPT_FILE}")
 
         return result
 
@@ -289,12 +305,24 @@ class SessionManager:
         Raises:
             ValueError: If no compatible device found
         """
-        compatible_devices = self.get_compatible_devices(audio_config)
-        if not compatible_devices:
-            raise ValueError(
-                f"No audio device found that supports "
-                f"{audio_config.sample_rate}Hz/{audio_config.bit_depth}bit"
-            )
+
+        # First check if configured device is valid
+        if audio_config.validate_device():
+            return
+
+        # Device not compatible, try to find alternative
+        compatible_device = audio_config.find_compatible_device()
+
+        if compatible_device:
+            # We could optionally update the config here or just warn the user
+            # For now, just log it
+            return
+
+        # No compatible device found at all
+        raise ValueError(
+            f"No audio device found that supports "
+            f"{audio_config.sample_rate}Hz/{audio_config.bit_depth}bit"
+        )
 
     def _add_to_recent_sessions(self, session_dir: Path) -> None:
         """Add session to recent sessions list.
@@ -328,6 +356,51 @@ class SessionManager:
         # Update settings
         settings['recent_sessions'] = recent
         settings['last_session_path'] = session_path
+
+        # Save settings
+        self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.settings_file, 'w') as f:
+            json.dump(settings, f, indent=2)
+
+    def get_default_base_dir(self) -> Optional[Path]:
+        """Get the default base directory for new sessions.
+
+        Returns:
+            Default base directory or None
+        """
+        if not self.settings_file.exists():
+            return None
+
+        try:
+            with open(self.settings_file, 'r') as f:
+                settings = json.load(f)
+                base_dir = settings.get('default_base_dir')
+                if base_dir:
+                    path = Path(base_dir)
+                    if path.exists():
+                        return path
+        except (json.JSONDecodeError, IOError):
+            pass
+
+        return None
+
+    def set_default_base_dir(self, base_dir: Path) -> None:
+        """Set the default base directory for new sessions.
+
+        Args:
+            base_dir: Directory to use as default for new sessions
+        """
+        # Load existing settings
+        settings = {}
+        if self.settings_file.exists():
+            try:
+                with open(self.settings_file, 'r') as f:
+                    settings = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                settings = {}
+
+        # Update default base dir
+        settings['default_base_dir'] = str(base_dir.absolute())
 
         # Save settings
         self.settings_file.parent.mkdir(parents=True, exist_ok=True)

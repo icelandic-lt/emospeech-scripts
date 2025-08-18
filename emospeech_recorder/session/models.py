@@ -10,6 +10,8 @@ from pathlib import Path
 from datetime import datetime
 import json
 
+from ..utils.device_manager import get_device_manager
+
 
 @dataclass
 class SpeakerInfo:
@@ -42,16 +44,23 @@ class SessionConfig:
     sample_rate: int
     bit_depth: int
     format: str  # wav/flac
-    input_device: Optional[str] = None
+    input_device: Optional[str] = None  # Device name or "default" for system default
     channels: int = 1
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return asdict(self)
+        data = asdict(self)
+        # Ensure we never save None for input_device
+        if data.get('input_device') is None:
+            data['input_device'] = "default"
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'SessionConfig':
         """Create instance from dictionary."""
+        # Handle legacy sessions with None input_device
+        if 'input_device' in data and data['input_device'] is None:
+            data['input_device'] = "default"
         return cls(**data)
 
     def is_compatible_with_device(self, device_info: Dict[str, Any]) -> bool:
@@ -63,19 +72,63 @@ class SessionConfig:
         Returns:
             True if device can support these settings
         """
-        # Check sample rate support
-        if 'default_samplerate' in device_info:
-            # Simple check - could be enhanced with actual testing
-            device_sr = device_info['default_samplerate']
-            if device_sr and abs(device_sr - self.sample_rate) > 1:
-                return False
-
-        # Check channel support
-        max_channels = device_info.get('max_input_channels', 0)
-        if max_channels < self.channels:
+        device_name = device_info.get('name')
+        if not device_name:
             return False
 
-        return True
+        device_manager = get_device_manager()
+        return device_manager.check_device_compatibility(
+            device_name=device_name,
+            sample_rate=self.sample_rate,
+            bit_depth=self.bit_depth,
+            channels=self.channels
+        )
+
+    def validate_device(self) -> bool:
+        """Check if the configured device supports this audio configuration.
+
+        Returns:
+            True if the configured device (or system default) is compatible
+        """
+        device_manager = get_device_manager()
+
+        # Handle legacy None value
+        if self.input_device is None:
+            self.input_device = "default"
+
+        # Determine which device to check
+        if self.input_device == "default":
+            # Check system default
+            device_to_check = None
+        else:
+            # Check specific device
+            device_to_check = self.input_device
+
+        # Test compatibility
+        compatible = device_manager.check_device_compatibility(
+            device_to_check, self.sample_rate, self.bit_depth, self.channels
+        )
+
+        return compatible
+
+    def find_compatible_device(self) -> Optional[str]:
+        """Find any device that supports this audio configuration.
+
+        Returns:
+            Device name ("default" for system default) or None if no device found
+        """
+        device_manager = get_device_manager()
+
+        if self.input_device is None:
+            self.input_device = "default"
+
+        # Use device manager to find a compatible device
+        result = device_manager.find_compatible_device(
+            self.sample_rate, self.bit_depth, self.channels,
+            preferred_name=self.input_device if self.input_device != "default" else None
+        )
+
+        return result
 
 
 @dataclass

@@ -26,8 +26,8 @@ class AudioConfig:
         bit_depth: Bit depth (16 or 24)
         dtype: NumPy data type for audio arrays
         subtype: Soundfile subtype for saving
-        input_device: Input device index or None for default
-        output_device: Output device index or None for default
+        input_device: Input device name or None for default
+        output_device: Output device name or None for default
         sync_response_time_ms: Audio sync response time in milliseconds
     """
     sample_rate: int = AudioConstants.DEFAULT_SAMPLE_RATE
@@ -35,8 +35,8 @@ class AudioConfig:
     bit_depth: int = AudioConstants.DEFAULT_BIT_DEPTH
     dtype: str = 'int16'
     subtype: str = FileConstants.PCM_16_SUBTYPE
-    input_device: Optional[int] = None
-    output_device: Optional[int] = None
+    input_device: Optional[str] = None
+    output_device: Optional[str] = None
     sync_response_time_ms: float = 10.0  # Default 10ms response time
 
 

@@ -37,12 +37,17 @@ class TestSessionManager(unittest.TestCase):
 
     def test_create_session(self):
         """Test creating a new session."""
+        # Create test script file
+        script_file = self.base_dir / "test_script.txt"
+        script_file.write_text("(utt_001 \"Test utterance\")")
+
         session = self.manager.create_session(
             base_dir=self.base_dir,
             speaker_name="Test",
             gender="M",
             emotion="happy",
-            audio_config=self.audio_config
+            audio_config=self.audio_config,
+            script_source=script_file
         )
 
         # Check session object
@@ -61,12 +66,17 @@ class TestSessionManager(unittest.TestCase):
 
     def test_create_session_custom_name(self):
         """Test creating session with custom directory name."""
+        # Create test script file
+        script_file = self.base_dir / "test_script.txt"
+        script_file.write_text("(utt_001 \"Test utterance\")")
+
         session = self.manager.create_session(
             base_dir=self.base_dir,
             speaker_name="Test",
             gender="F",
             emotion="neutral",
             audio_config=self.audio_config,
+            script_source=script_file,
             custom_dir_name="my_custom_session"
         )
 
@@ -95,15 +105,48 @@ class TestSessionManager(unittest.TestCase):
         self.assertTrue(session_script.exists())
         self.assertEqual(session_script.read_text(), "Test utterance 1\nTest utterance 2")
 
+    def test_create_session_without_script(self):
+        """Test creating session without script raises error."""
+        with self.assertRaises(ValueError) as context:
+            self.manager.create_session(
+                base_dir=self.base_dir,
+                speaker_name="Test",
+                gender="M",
+                emotion="happy",
+                audio_config=self.audio_config,
+                script_source=None
+            )
+        self.assertIn("Script file is required", str(context.exception))
+
+    def test_create_session_with_nonexistent_script(self):
+        """Test creating session with non-existent script raises error."""
+        nonexistent_script = self.base_dir / "nonexistent.txt"
+
+        with self.assertRaises(FileNotFoundError) as context:
+            self.manager.create_session(
+                base_dir=self.base_dir,
+                speaker_name="Test",
+                gender="M",
+                emotion="happy",
+                audio_config=self.audio_config,
+                script_source=nonexistent_script
+            )
+        self.assertIn("Script file not found", str(context.exception))
+
     def test_create_duplicate_session(self):
         """Test creating duplicate session raises error."""
+        # Create test script file
+        script_file = self.base_dir / "test_script.txt"
+        script_file.write_text("(utt_001 \"Test utterance\")")
+
         # Create first session
         self.manager.create_session(
             base_dir=self.base_dir,
             speaker_name="Test",
             gender="M",
             emotion="happy",
-            audio_config=self.audio_config
+            audio_config=self.audio_config,
+            script_source=script_file
         )
 
         # Try to create duplicate
@@ -113,18 +156,24 @@ class TestSessionManager(unittest.TestCase):
                 speaker_name="Test",
                 gender="M",
                 emotion="happy",
-                audio_config=self.audio_config
+                audio_config=self.audio_config,
+                script_source=script_file
             )
 
     def test_load_session(self):
         """Test loading an existing session."""
+        # Create test script file
+        script_file = self.base_dir / "test_script.txt"
+        script_file.write_text("(utt_001 \"Test utterance\")")
+
         # Create a session first
         created = self.manager.create_session(
             base_dir=self.base_dir,
             speaker_name="LoadTest",
             gender="F",
             emotion="sad",
-            audio_config=self.audio_config
+            audio_config=self.audio_config,
+            script_source=script_file
         )
 
         # Create new manager and load
@@ -152,8 +201,37 @@ class TestSessionManager(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.manager.load_session(bad_dir)
 
+    def test_load_session_without_script(self):
+        """Test loading session without script file raises error."""
+        # Create test script file for initial creation
+        script_file = self.base_dir / "test_script.txt"
+        script_file.write_text("(utt_001 \"Test utterance\")")
+
+        # Create valid session
+        session = self.manager.create_session(
+            base_dir=self.base_dir,
+            speaker_name="NoScript",
+            gender="M",
+            emotion="neutral",
+            audio_config=self.audio_config,
+            script_source=script_file
+        )
+
+        # Delete the script file from session
+        (session.session_dir / "script.txt").unlink()
+
+        # Try to load session without script
+        new_manager = SessionManager(self.settings_file)
+        with self.assertRaises(FileNotFoundError) as context:
+            new_manager.load_session(session.session_dir)
+        self.assertIn("Required script file not found", str(context.exception))
+
     def test_find_sessions(self):
         """Test finding all sessions in directory."""
+        # Create test script file
+        script_file = self.base_dir / "test_script.txt"
+        script_file.write_text("(utt_001 \"Test utterance\")")
+
         # Create multiple sessions
         for i, emotion in enumerate(["happy", "sad", "angry"]):
             self.manager.create_session(
@@ -161,7 +239,8 @@ class TestSessionManager(unittest.TestCase):
                 speaker_name=f"Speaker{i}",
                 gender="M",
                 emotion=emotion,
-                audio_config=self.audio_config
+                audio_config=self.audio_config,
+                script_source=script_file
             )
 
         # Also create non-session directory
@@ -176,13 +255,18 @@ class TestSessionManager(unittest.TestCase):
 
     def test_recent_sessions(self):
         """Test recent sessions tracking."""
+        # Create test script file
+        script_file = self.base_dir / "test_script.txt"
+        script_file.write_text("(utt_001 \"Test utterance\")")
+
         # Create sessions
         session1 = self.manager.create_session(
             base_dir=self.base_dir,
             speaker_name="First",
             gender="M",
             emotion="happy",
-            audio_config=self.audio_config
+            audio_config=self.audio_config,
+            script_source=script_file
         )
 
         session2 = self.manager.create_session(
@@ -190,7 +274,8 @@ class TestSessionManager(unittest.TestCase):
             speaker_name="Second",
             gender="F",
             emotion="sad",
-            audio_config=self.audio_config
+            audio_config=self.audio_config,
+            script_source=script_file
         )
 
         # Check recent sessions
@@ -205,13 +290,18 @@ class TestSessionManager(unittest.TestCase):
         # Initially no last session
         self.assertIsNone(self.manager.get_last_session())
 
+        # Create test script file
+        script_file = self.base_dir / "test_script.txt"
+        script_file.write_text("(utt_001 \"Test utterance\")")
+
         # Create session
         session = self.manager.create_session(
             base_dir=self.base_dir,
             speaker_name="Last",
             gender="M",
             emotion="neutral",
-            audio_config=self.audio_config
+            audio_config=self.audio_config,
+            script_source=script_file
         )
 
         # Should be set as last session
@@ -220,13 +310,18 @@ class TestSessionManager(unittest.TestCase):
 
     def test_validate_session(self):
         """Test session validation."""
+        # Create test script file
+        script_file = self.base_dir / "test_script.txt"
+        script_file.write_text("(utt_001 \"Test utterance\")")
+
         # Create valid session
         session = self.manager.create_session(
             base_dir=self.base_dir,
             speaker_name="Valid",
             gender="F",
             emotion="happy",
-            audio_config=self.audio_config
+            audio_config=self.audio_config,
+            script_source=script_file
         )
 
         # Validate
@@ -241,6 +336,17 @@ class TestSessionManager(unittest.TestCase):
         result = self.manager.validate_session(session.session_dir)
         self.assertTrue(result['valid'])
         self.assertIn("Missing recordings directory", result['warnings'])
+
+        # Remove script file
+        (session.session_dir / "script.txt").unlink()
+
+        # Should be invalid without script
+        result = self.manager.validate_session(session.session_dir)
+        self.assertFalse(result['valid'])
+        self.assertTrue(any("Required script file not found" in err for err in result['errors']))
+
+        # Restore script for next test
+        (session.session_dir / "script.txt").write_text("(utt_001 \"Test\")")
 
         # Remove session.json
         (session.session_dir / "session.json").unlink()
@@ -276,13 +382,18 @@ class TestSessionManager(unittest.TestCase):
 
     def test_recent_sessions_persistence(self):
         """Test recent sessions persist across manager instances."""
+        # Create test script file
+        script_file = self.base_dir / "test_script.txt"
+        script_file.write_text("(utt_001 \"Test utterance\")")
+
         # Create session with first manager
         session = self.manager.create_session(
             base_dir=self.base_dir,
             speaker_name="Persist",
             gender="M",
             emotion="happy",
-            audio_config=self.audio_config
+            audio_config=self.audio_config,
+            script_source=script_file
         )
 
         # Create new manager instance
@@ -299,6 +410,10 @@ class TestSessionManager(unittest.TestCase):
 
     def test_settings_file_creation(self):
         """Test settings file is created if it doesn't exist."""
+        # Create test script file
+        script_file = self.base_dir / "test_script.txt"
+        script_file.write_text("(utt_001 \"Test utterance\")")
+
         # Use non-existent settings file
         new_settings = self.base_dir / "subdir" / "settings.json"
         manager = SessionManager(new_settings)
@@ -309,7 +424,8 @@ class TestSessionManager(unittest.TestCase):
             speaker_name="Settings",
             gender="F",
             emotion="neutral",
-            audio_config=self.audio_config
+            audio_config=self.audio_config,
+            script_source=script_file
         )
 
         # Settings file should be created

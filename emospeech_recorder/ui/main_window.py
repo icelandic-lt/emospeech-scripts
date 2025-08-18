@@ -217,6 +217,30 @@ class MainWindow:
         # File menu
         file_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="File", menu=file_menu)
+
+        # Session management
+        # Platform-specific accelerator display
+        import platform
+        accel_mod = "Cmd" if platform.system() == 'Darwin' else "Ctrl"
+
+        file_menu.add_command(
+            label="New Session...",
+            command=self._new_session_callback,
+            accelerator=f"{accel_mod}+N"
+        )
+        file_menu.add_command(
+            label="Open Session...",
+            command=self._open_session_callback,
+            accelerator=f"{accel_mod}+O"
+        )
+
+        # Recent Sessions submenu
+        self.recent_menu = tk.Menu(file_menu, tearoff=0)
+        file_menu.add_cascade(label="Recent Sessions", menu=self.recent_menu)
+        self._update_recent_sessions_menu()
+
+        file_menu.add_separator()
+
         # Route Quit via app callback if provided to ensure clean shutdown
         quit_cmd = (self.app_callbacks.get('quit')
                     if isinstance(getattr(self, 'app_callbacks', None), dict) and 'quit' in self.app_callbacks
@@ -226,6 +250,17 @@ class MainWindow:
         # View menu
         view_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="View", menu=view_menu)
+
+        # Session Settings (at the top)
+        # Use Cmd-I on macOS, Ctrl-I on Windows/Linux
+        accel = "Cmd+I" if tk.sys.platform == 'darwin' else "Ctrl+I"
+        view_menu.add_command(
+            label="Session Settings...",
+            command=self._show_session_settings,
+            accelerator=accel
+        )
+
+        view_menu.add_separator()
 
         # Mel Spectrogram checkbutton
         self.mel_spectrogram_var = tk.BooleanVar(value=self.config.display.show_spectrogram)
@@ -280,37 +315,7 @@ class MainWindow:
         settings_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Settings", menu=settings_menu)
 
-        # Audio settings submenu
-        audio_menu = tk.Menu(settings_menu, tearoff=0)
-        settings_menu.add_cascade(label="Audio", menu=audio_menu)
-
-        # Sample Rate submenu
-        sample_rate_menu = tk.Menu(audio_menu, tearoff=0)
-        audio_menu.add_cascade(label="Sample Rate", menu=sample_rate_menu)
-
-        self.sample_rate_var = tk.IntVar(value=self.config.audio.sample_rate)
-        for rate in [16000, 22050, 44100, 48000, 96000]:
-            sample_rate_menu.add_radiobutton(
-                label=f"{rate} Hz",
-                variable=self.sample_rate_var,
-                value=rate,
-                command=lambda r=rate: self._on_sample_rate_change(r)
-            )
-
-        # Bit Depth submenu
-        bit_depth_menu = tk.Menu(audio_menu, tearoff=0)
-        audio_menu.add_cascade(label="Bit Depth", menu=bit_depth_menu)
-
-        self.bit_depth_var = tk.IntVar(value=self.config.audio.bit_depth)
-        for depth in [16, 24]:
-            bit_depth_menu.add_radiobutton(
-                label=f"{depth} bit",
-                variable=self.bit_depth_var,
-                value=depth,
-                command=lambda d=depth: self._on_bit_depth_change(d)
-            )
-
-        # Device submenu (after Audio)
+        # Device submenu
         def _call_app(name: str, idx: int) -> None:
             try:
                 cb = self.app_callbacks.get(name)
@@ -481,36 +486,27 @@ A tool for recording (emotional) speech datasets."""
         """Callback for menu toggle fullscreen."""
         self.toggle_fullscreen()
 
-    def _on_sample_rate_change(self, rate: int) -> None:
-        """Handle sample rate change from menu.
-
-        Args:
-            rate: New sample rate in Hz
-        """
-        self.config.audio.sample_rate = rate
-        self.settings_manager.update_setting('sample_rate', rate)
-
-        # Notify app if callback available
-        if 'update_audio_settings' in self.app_callbacks:
-            self.app_callbacks['update_audio_settings']()
-
-        self.set_status(f"Sample rate changed to {rate} Hz")
-
-    def _on_bit_depth_change(self, depth: int) -> None:
-        """Handle bit depth change from menu.
-
-        Args:
-            depth: New bit depth (16 or 24)
-        """
-        self.config.audio.bit_depth = depth
-        self.config.audio.__post_init__()  # Update dtype and subtype
-        self.settings_manager.update_setting('bit_depth', depth)
-
-        # Notify app if callback available
-        if 'update_audio_settings' in self.app_callbacks:
-            self.app_callbacks['update_audio_settings']()
-
-        self.set_status(f"Bit depth changed to {depth} bit")
+    def _show_session_settings(self) -> None:
+        """Show the session settings dialog."""
+        # Get current session from app callback
+        if 'get_current_session' in self.app_callbacks:
+            session = self.app_callbacks['get_current_session']()
+            if session:
+                from .dialogs import SessionSettingsDialog
+                dialog = SessionSettingsDialog(self.root, session)
+                dialog.show()
+            else:
+                tk.messagebox.showwarning(
+                    "No Session",
+                    "No session is currently loaded.",
+                    parent=self.root
+                )
+        else:
+            tk.messagebox.showerror(
+                "Error",
+                "Session information is not available.",
+                parent=self.root
+            )
 
     def _set_window_icon(self) -> None:
         """Set the window icon.
@@ -1069,3 +1065,62 @@ A tool for recording (emotional) speech datasets."""
         # Call app's update_info_overlay if available
         if 'update_info_overlay' in self.app_callbacks:
             self.app_callbacks['update_info_overlay']()
+
+    def _new_session_callback(self) -> None:
+        """Handle New Session menu item."""
+        # Use app callback if available
+        if 'new_session' in self.app_callbacks:
+            self.app_callbacks['new_session']()
+        else:
+            self.set_status("New Session dialog not yet implemented")
+
+    def _open_session_callback(self) -> None:
+        """Handle Open Session menu item."""
+        # Use app callback if available
+        if 'open_session' in self.app_callbacks:
+            self.app_callbacks['open_session']()
+        else:
+            self.set_status("Open Session dialog not yet implemented")
+
+    def _open_recent_session(self, session_path: Path) -> None:
+        """Handle opening a recent session.
+
+        Args:
+            session_path: Path to the session directory
+        """
+        if 'open_recent_session' in self.app_callbacks:
+            self.app_callbacks['open_recent_session'](session_path)
+        else:
+            self.set_status(f"Opening: {session_path.name}")
+
+    def _update_recent_sessions_menu(self) -> None:
+        """Update the Recent Sessions submenu."""
+        # Clear existing items
+        self.recent_menu.delete(0, tk.END)
+
+        # Get recent sessions from app if available
+        if 'get_recent_sessions' in self.app_callbacks:
+            recent_sessions = self.app_callbacks['get_recent_sessions']()
+
+            if recent_sessions:
+                for session_path in recent_sessions[:10]:  # Max 10 recent sessions
+                    session_name = session_path.name if isinstance(session_path, Path) else str(session_path)
+                    self.recent_menu.add_command(
+                        label=session_name,
+                        command=lambda p=session_path: self._open_recent_session(p)
+                    )
+            else:
+                self.recent_menu.add_command(label="(No recent sessions)", state=tk.DISABLED)
+        else:
+            self.recent_menu.add_command(label="(No recent sessions)", state=tk.DISABLED)
+
+    def update_session_title(self, session_name: str = None) -> None:
+        """Update window title with session name.
+
+        Args:
+            session_name: Name of the current session, or None for default title
+        """
+        if session_name:
+            self.root.title(f"Revoxx - {session_name}")
+        else:
+            self.root.title("Revoxx")

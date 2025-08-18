@@ -12,14 +12,7 @@ growing existing files further.
 from typing import Callable, Optional
 import tkinter as tk
 
-from ...utils.audio_devices import (
-    list_input_devices,
-    list_output_devices,
-    format_device_label,
-    get_default_device_indices,
-    refresh_devices_backend,
-    debug_dump_devices,
-)
+from ...utils.device_manager import get_device_manager
 
 
 class AudioDevicesMenuBuilder:
@@ -56,14 +49,19 @@ class AudioDevicesMenuBuilder:
         # Variables to track current selection
         # If no initial indices provided, try system defaults for initial check state
         if initial_input_index is None or initial_output_index is None:
-            def_in, def_out = get_default_device_indices()
+            device_manager = get_device_manager()
+            def_in, def_out = device_manager.get_default_device_indices()
             if initial_input_index is None:
                 initial_input_index = def_in if def_in is not None else -1
             if initial_output_index is None:
                 initial_output_index = def_out if def_out is not None else -1
 
-        self.input_var = tk.IntVar(value=-1 if initial_input_index is None else initial_input_index)
-        self.output_var = tk.IntVar(value=-1 if initial_output_index is None else initial_output_index)
+        self.input_var = tk.IntVar(
+            value=-1 if initial_input_index is None else initial_input_index
+        )
+        self.output_var = tk.IntVar(
+            value=-1 if initial_output_index is None else initial_output_index
+        )
 
         # Submenus
         self.input_menu = tk.Menu(self.device_menu, tearoff=0)
@@ -75,8 +73,12 @@ class AudioDevicesMenuBuilder:
         self.input_channels_var = tk.StringVar()
         self.output_channels_var = tk.StringVar()
         # Default selection
-        self.input_channels_var.set('default' if not self._initial_input_mapping else 'custom')
-        self.output_channels_var.set('default' if not self._initial_output_mapping else 'custom')
+        self.input_channels_var.set(
+            "default" if not self._initial_input_mapping else "custom"
+        )
+        self.output_channels_var.set(
+            "default" if not self._initial_output_mapping else "custom"
+        )
 
         # Build initial menu
         self._build_menu()
@@ -95,7 +97,9 @@ class AudioDevicesMenuBuilder:
         self._populate_input_devices()
 
         # Input channels submenu
-        self.device_menu.add_cascade(label="Input Channels", menu=self.input_channels_menu)
+        self.device_menu.add_cascade(
+            label="Input Channels", menu=self.input_channels_menu
+        )
         self._populate_input_channels(self._initial_input_mapping)
 
         # Output devices submenu
@@ -104,17 +108,20 @@ class AudioDevicesMenuBuilder:
         self._populate_output_devices()
 
         # Output channels submenu
-        self.device_menu.add_cascade(label="Output Channels", menu=self.output_channels_menu)
+        self.device_menu.add_cascade(
+            label="Output Channels", menu=self.output_channels_menu
+        )
         self._populate_output_channels(self._initial_output_mapping)
 
     def _populate_input_devices(self) -> None:
         self.input_menu.delete(0, tk.END)
         selected = self.input_var.get()
         has_match = False
-        for dev in list_input_devices():
-            idx = dev['index']
+        device_manager = get_device_manager()
+        for dev in device_manager.get_input_devices():
+            idx = dev["index"]
             self.input_menu.add_radiobutton(
-                label=format_device_label(dev),
+                label=device_manager.format_device_label(dev),
                 variable=self.input_var,
                 value=idx,
                 command=lambda i=idx: self._on_select_input(i),
@@ -131,10 +138,11 @@ class AudioDevicesMenuBuilder:
         self.output_menu.delete(0, tk.END)
         selected = self.output_var.get()
         has_match = False
-        for dev in list_output_devices():
-            idx = dev['index']
+        device_manager = get_device_manager()
+        for dev in device_manager.get_output_devices():
+            idx = dev["index"]
             self.output_menu.add_radiobutton(
-                label=format_device_label(dev),
+                label=device_manager.format_device_label(dev),
                 variable=self.output_var,
                 value=idx,
                 command=lambda i=idx: self._on_select_output(i),
@@ -157,9 +165,10 @@ class AudioDevicesMenuBuilder:
         # Determine available channels from selected device
         selected_idx = self.input_var.get()
         max_ch = 0
-        for dev in list_input_devices():
-            if dev['index'] == selected_idx:
-                max_ch = int(dev.get('max_input_channels') or 0)
+        device_manager = get_device_manager()
+        for dev in device_manager.get_input_devices():
+            if dev["index"] == selected_idx:
+                max_ch = int(dev.get("max_input_channels") or 0)
                 break
         # Mono choices
         if max_ch > 0:
@@ -180,7 +189,7 @@ class AudioDevicesMenuBuilder:
                     label=f"Stereo {start+1}–{start+2}",
                     variable=self.input_channels_var,
                     value=f"stereo:{start}",
-                    command=lambda s=start: self._on_select_input_channels([s, s+1]),
+                    command=lambda s=start: self._on_select_input_channels([s, s + 1]),
                 )
             self.input_channels_menu.add_cascade(label="Stereo", menu=stereo_menu)
 
@@ -194,9 +203,10 @@ class AudioDevicesMenuBuilder:
         )
         selected_idx = self.output_var.get()
         max_ch = 0
-        for dev in list_output_devices():
-            if dev['index'] == selected_idx:
-                max_ch = int(dev.get('max_output_channels') or 0)
+        device_manager = get_device_manager()
+        for dev in device_manager.get_output_devices():
+            if dev["index"] == selected_idx:
+                max_ch = int(dev.get("max_output_channels") or 0)
                 break
         # Mono routing to a specific output channel
         if max_ch > 0:
@@ -216,10 +226,11 @@ class AudioDevicesMenuBuilder:
 
     def _on_rescan(self) -> None:
         # Try to force PortAudio to refresh device list
-        refresh_devices_backend()
+        device_manager = get_device_manager()
+        device_manager.refresh()
         # Optionally dump devices in debug mode
         if self.debug:
-            debug_dump_devices()
+            device_manager.debug_dump_devices()
         # Rebuild menus
         self.refresh()
 
@@ -255,5 +266,3 @@ class AudioDevicesMenuBuilder:
                 self.on_select_output_channels(mapping)
             except Exception:
                 pass
-
-

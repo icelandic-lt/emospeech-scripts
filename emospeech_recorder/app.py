@@ -2,7 +2,8 @@
 
 # Set matplotlib backend before any matplotlib imports
 import matplotlib
-matplotlib.use('TkAgg')
+
+matplotlib.use("TkAgg")
 
 import argparse
 import sys
@@ -26,18 +27,14 @@ from .utils.state import AppState
 from .utils.file_manager import RecordingFileManager, ScriptFileManager
 from .utils.settings_manager import SettingsManager
 from .ui.main_window import MainWindow
-from .utils.audio_devices import (
-    list_input_devices,
-    list_output_devices,
-    get_device_name_by_index,
-    get_default_device_indices,
-    refresh_devices_backend,
-)
+from .ui.dialogs import NewSessionDialog
+from .utils.device_manager import get_device_manager
 from .audio.recorder import record_process
 from .audio.player import playback_process
 from .audio.audio_buffer import AudioBuffer
 from .audio.buffer_manager import BufferManager
 from .audio.shared_state import SharedState
+from .session import SessionManager, Session, SessionConfig
 
 
 class Revoxx:
@@ -61,20 +58,36 @@ class Revoxx:
         playback_queue: Queue for controlling the playback process
     """
 
-    def __init__(self, config: RecorderConfig, script_file: Path, recording_dir: Path, debug: bool = False):
+    def __init__(
+        self,
+        config: RecorderConfig,
+        session: Optional[Session] = None,
+        debug: bool = False,
+    ):
         """Initialize the application.
 
         Args:
             config: Application configuration object containing audio, display,
                 and UI settings
-            script_file: Path to script file in Festival data format
-            recording_dir: Directory for saving recordings (created if not exists)
+            session: Optional pre-loaded session, if None will show session dialog
             debug: Enable debug output
         """
         self.config = config
-        self.script_file = script_file
-        self.recording_dir = recording_dir
         self.debug = debug
+
+        # Initialize session management
+        self.session_manager = SessionManager()
+        self.current_session = session
+
+        # If no session provided, we'll need to create or load one
+        if not self.current_session:
+            # This will be handled after UI initialization
+            self.script_file = None
+            self.recording_dir = None
+        else:
+            # Use session paths
+            self.script_file = self.current_session.get_script_path()
+            self.recording_dir = self.current_session.get_recordings_dir()
 
         # Track default-device notifications
         self._default_input_in_effect = False
@@ -98,11 +111,18 @@ class Revoxx:
         self.saved_level_meter_state = None
 
         # Initialize file managers
-        self.file_manager = RecordingFileManager(recording_dir)
         self.script_manager = ScriptFileManager()
 
-        # Load script
-        self._load_script()
+        if self.current_session:
+            # Initialize with session paths
+            self.file_manager = RecordingFileManager(self.recording_dir)
+            self._load_script()
+        else:
+            # No session yet - will be initialized after session creation/selection
+            self.file_manager = None
+            self.state.recording.labels = []
+            self.state.recording.utterances = []
+            self.state.recording.takes = {}
 
         # Initialize multiprocessing components
         self._init_multiprocessing()
@@ -113,9 +133,9 @@ class Revoxx:
         # Initialize UI
         self._init_ui()
         # Expose quit callback to UI menu if needed
-        if hasattr(self, 'window') and hasattr(self.window, 'app_callbacks'):
+        if hasattr(self, "window") and hasattr(self.window, "app_callbacks"):
             try:
-                self.window.app_callbacks['quit'] = self._quit
+                self.window.app_callbacks["quit"] = self._quit
             except Exception:
                 pass
 
@@ -126,8 +146,10 @@ class Revoxx:
         self._update_display()
 
         # Load initial spectrogram after UI is ready
-        if hasattr(self.window, 'mel_spectrogram'):
-            self.root.after(UIConstants.INITIAL_DISPLAY_DELAY_MS, self._show_saved_recording)
+        if hasattr(self.window, "mel_spectrogram"):
+            self.root.after(
+                UIConstants.INITIAL_DISPLAY_DELAY_MS, self._show_saved_recording
+            )
 
     def _apply_saved_settings(self) -> None:
         """Apply saved settings to configuration."""
@@ -146,9 +168,10 @@ class Revoxx:
                 restored = False
                 if settings.input_device is not None:
                     name = settings.input_device
-                    for dev in list_input_devices():
-                        if dev['name'] == name:
-                            self.config.audio.input_device = dev['index']
+                    device_manager = get_device_manager()
+                    for dev in device_manager.get_input_devices():
+                        if dev["name"] == name:
+                            self.config.audio.input_device = dev["index"]
                             restored = True
                             break
                 # If not restored, we will use system default
@@ -161,9 +184,10 @@ class Revoxx:
                 restored = False
                 if settings.output_device is not None:
                     name = settings.output_device
-                    for dev in list_output_devices():
-                        if dev['name'] == name:
-                            self.config.audio.output_device = dev['index']
+                    device_manager = get_device_manager()
+                    for dev in device_manager.get_output_devices():
+                        if dev["name"] == name:
+                            self.config.audio.output_device = dev["index"]
                             restored = True
                             break
                 self._default_output_in_effect = not restored
@@ -184,13 +208,61 @@ class Revoxx:
         self._saved_window_geometry = settings.window_geometry
 
     def _load_script(self) -> None:
-        """Load and parse the script file."""
-        labels, utterances = self.script_manager.load_script(self.script_file)
-        self.state.recording.labels = labels
-        self.state.recording.utterances = utterances
+        """Load and parse the script file from current session."""
+        if not self.current_session:
+            print("Warning: No session loaded, cannot load script")
+            self.state.recording.labels = []
+            self.state.recording.utterances = []
+            self.state.recording.takes = {}
+            return
 
-        # Scan for existing recordings
-        self.state.recording.takes = self.file_manager.scan_all_takes(labels)
+        # Script file must exist in valid session
+        if not self.script_file or not self.script_file.exists():
+            raise FileNotFoundError(
+                f"Required script file not found in session: {self.script_file}"
+            )
+
+        self._reload_script_and_recordings()
+
+    def _reload_script_and_recordings(self) -> None:
+        """Reload script content and scan for existing recordings.
+
+        This method is used both during initial load and when switching sessions.
+        It parses the script file, loads utterances, and scans for existing takes.
+        """
+        if not self.script_file or not self.script_file.exists():
+            print(f"Warning: Script file not found: {self.script_file}")
+            self.state.recording.labels = []
+            self.state.recording.utterances = []
+            self.state.recording.takes = {}
+            return
+
+        try:
+            # Parse script file
+            labels, utterances = self.script_manager.load_script(self.script_file)
+            self.state.recording.labels = labels
+            self.state.recording.utterances = utterances
+
+            # Scan for existing recordings if file manager is initialized
+            if self.file_manager:
+                self.state.recording.takes = self.file_manager.scan_all_takes(labels)
+            else:
+                self.state.recording.takes = {}
+
+            # Reset to first utterance
+            self.state.recording.current_index = 0
+
+            # Update display if UI is initialized
+            if hasattr(self, "window") and self.window:
+                self._update_display()
+                self._show_saved_recording()
+
+        except Exception as e:
+            print(f"Error loading script: {e}")
+            # Set empty state on error
+            self.state.recording.labels = []
+            self.state.recording.utterances = []
+            self.state.recording.takes = {}
 
     def _init_multiprocessing(self) -> None:
         """Initialize multiprocessing components."""
@@ -208,12 +280,12 @@ class Revoxx:
 
         # Initialize audio settings in struct shared state
         # Determine format type based on file extension constant
-        format_type = 1 if FileConstants.AUDIO_FILE_EXTENSION == '.flac' else 0
+        format_type = 1 if FileConstants.AUDIO_FILE_EXTENSION == ".flac" else 0
         self.shared_state.update_audio_settings(
             sample_rate=self.config.audio.sample_rate,
             bit_depth=self.config.audio.bit_depth,
             channels=self.config.audio.channels,
-            format_type=format_type
+            format_type=format_type,
         )
 
         # Initialize recording state to STOPPED
@@ -230,25 +302,27 @@ class Revoxx:
         self.playback_queue = mp.Queue()
 
         # Initialize shared state
-        self.manager_dict['recording'] = False
-        self.manager_dict['playing'] = False
-        self.manager_dict['audio_queue_active'] = self.config.display.show_spectrogram
-        self.manager_dict['save_path'] = None
-        self.manager_dict['debug'] = self.debug
+        self.manager_dict["recording"] = False
+        self.manager_dict["playing"] = False
+        self.manager_dict["audio_queue_active"] = self.config.display.show_spectrogram
+        self.manager_dict["save_path"] = None
+        self.manager_dict["debug"] = self.debug
 
     def _init_ui(self) -> None:
         """Initialize the user interface."""
         # For macOS: Set the process name before creating any windows
-        if platform.system() == 'Darwin':
+        if platform.system() == "Darwin":
             try:
                 # Try using PyObjC to set the application name
                 from AppKit import NSApp, NSApplication
+
                 NSApplication.sharedApplication()
                 NSApp.setActivationPolicy_(0)  # NSApplicationActivationPolicyRegular
 
                 # Set the application name
                 from Foundation import NSProcessInfo
-                NSProcessInfo.processInfo().setValue_forKey_('Revoxx', 'processName')
+
+                NSProcessInfo.processInfo().setValue_forKey_("Revoxx", "processName")
             except ImportError:
                 # PyObjC not available, try ctypes approach
                 try:
@@ -256,41 +330,48 @@ class Revoxx:
                     import ctypes.util
 
                     # Load the Foundation framework
-                    foundation = ctypes.cdll.LoadLibrary(ctypes.util.find_library('Foundation'))
+                    foundation = ctypes.cdll.LoadLibrary(
+                        ctypes.util.find_library("Foundation")
+                    )
 
                     # Get the current process info
-                    objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library('objc'))
+                    objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
 
                     # Set process name using low-level approach
-                    libc = ctypes.CDLL('/usr/lib/libc.dylib')
-                    title = b'Revoxx\0'
+                    libc = ctypes.CDLL("/usr/lib/libc.dylib")
+                    title = b"Revoxx\0"
                     libc.setproctitle(title)
                 except Exception:
                     pass
 
-        self.root = tk.Tk(className='Revoxx')
+        self.root = tk.Tk(className="Revoxx")
         self.root.title("Revoxx")
 
         # macOS: Route the standard application "Quit" (CMD+Q) to our central _quit()
-        if platform.system() == 'Darwin':
+        if platform.system() == "Darwin":
             try:
                 # Override the Cocoa default quit command used by Tk
-                self.root.createcommand('tk::mac::Quit', self._quit)
+                self.root.createcommand("tk::mac::Quit", self._quit)
             except Exception:
                 pass
 
         # Create callbacks for menu actions
         app_callbacks = {
-            'toggle_mel_spectrogram': self._toggle_mel_spectrogram,
-            'toggle_level_meter': self._toggle_level_meter,
-            'toggle_monitoring': self._toggle_monitoring,
-            'update_audio_settings': self._update_audio_settings,
-            'update_info_overlay': self._update_info_overlay,
-            'set_input_device': self._set_input_device,
-            'set_output_device': self._set_output_device,
-            'set_input_channel_mapping': self._set_input_channel_mapping,
-            'set_output_channel_mapping': self._set_output_channel_mapping,
-            'quit': self._quit
+            "toggle_mel_spectrogram": self._toggle_mel_spectrogram,
+            "toggle_level_meter": self._toggle_level_meter,
+            "toggle_monitoring": self._toggle_monitoring,
+            "update_audio_settings": self._update_audio_settings,
+            "update_info_overlay": self._update_info_overlay,
+            "set_input_device": self._set_input_device,
+            "set_output_device": self._set_output_device,
+            "set_input_channel_mapping": self._set_input_channel_mapping,
+            "set_output_channel_mapping": self._set_output_channel_mapping,
+            "new_session": self._new_session,
+            "open_session": self._open_session,
+            "open_recent_session": self._open_recent_session,
+            "get_recent_sessions": self._get_recent_sessions,
+            "get_current_session": self._get_current_session,
+            "quit": self._quit,
         }
 
         self.window = MainWindow(
@@ -301,65 +382,110 @@ class Revoxx:
             self.manager_dict,
             app_callbacks,
             self.settings_manager,
-            self.shared_state  # Pass struct shared state
+            self.shared_state,  # Pass struct shared state
         )
 
         # Start audio queue processing (widget is always created now)
-        if hasattr(self.window, 'mel_spectrogram') and self.window.mel_spectrogram is not None:
+        if (
+            hasattr(self.window, "mel_spectrogram")
+            and self.window.mel_spectrogram is not None
+        ):
             # Delay a bit to ensure Manager server is fully up before background thread accesses it
             self.root.after(50, self._start_audio_queue_processing)
 
     def _bind_keys(self) -> None:
         """Bind keyboard shortcuts."""
-        self.root.bind(f'<{KeyBindings.RECORD}>', lambda e: self._toggle_recording())
-        self.root.bind(f'<{KeyBindings.PLAY}>', lambda e: self._play_current())
-        self.root.bind(f'<{KeyBindings.NAVIGATE_DOWN}>', lambda e: self._navigate(1))
-        self.root.bind(f'<{KeyBindings.NAVIGATE_UP}>', lambda e: self._navigate(-1))
-        self.root.bind(f'<{KeyBindings.BROWSE_TAKES_RIGHT}>', lambda e: self._browse_takes(1))
-        self.root.bind(f'<{KeyBindings.BROWSE_TAKES_LEFT}>', lambda e: self._browse_takes(-1))
+        self.root.bind(f"<{KeyBindings.RECORD}>", lambda e: self._toggle_recording())
+        self.root.bind(f"<{KeyBindings.PLAY}>", lambda e: self._play_current())
+        self.root.bind(f"<{KeyBindings.NAVIGATE_DOWN}>", lambda e: self._navigate(1))
+        self.root.bind(f"<{KeyBindings.NAVIGATE_UP}>", lambda e: self._navigate(-1))
+        self.root.bind(
+            f"<{KeyBindings.BROWSE_TAKES_RIGHT}>", lambda e: self._browse_takes(1)
+        )
+        self.root.bind(
+            f"<{KeyBindings.BROWSE_TAKES_LEFT}>", lambda e: self._browse_takes(-1)
+        )
         # Toggle spectrogram can be 'm' or 'M'
         for key in KeyBindings.TOGGLE_SPECTROGRAM:
-            self.root.bind(f'<{key}>', lambda e: self._toggle_mel_spectrogram())
+            self.root.bind(f"<{key}>", lambda e: self._toggle_mel_spectrogram())
         # Toggle level meter can be 'l' or 'L'
         for key in KeyBindings.TOGGLE_LEVEL_METER:
-            self.root.bind(f'<{key}>', lambda e: self._toggle_level_meter())
-        self.root.bind(f'<{KeyBindings.TOGGLE_MONITORING}>', lambda e: self._toggle_monitoring())
-        self.root.bind(f'<{KeyBindings.DELETE_RECORDING}>', lambda e: self._delete_current_recording())
-        self.root.bind(f'<{KeyBindings.QUIT}>', lambda e: self._quit())
-        self.root.bind(f'<{KeyBindings.TOGGLE_FULLSCREEN}>', lambda e: self.window.toggle_fullscreen())
-        self.root.bind(f'<{KeyBindings.SHOW_HELP}>', lambda e: self.window._show_keyboard_shortcuts())
-        self.root.bind(f'<{KeyBindings.SHOW_INFO}>', lambda e: self._show_info_overlay())
+            self.root.bind(f"<{key}>", lambda e: self._toggle_level_meter())
+        self.root.bind(
+            f"<{KeyBindings.TOGGLE_MONITORING}>", lambda e: self._toggle_monitoring()
+        )
+        self.root.bind(
+            f"<{KeyBindings.DELETE_RECORDING}>",
+            lambda e: self._delete_current_recording(),
+        )
+        self.root.bind(
+            f"<{KeyBindings.TOGGLE_FULLSCREEN}>",
+            lambda e: self.window.toggle_fullscreen(),
+        )
+        self.root.bind(
+            f"<{KeyBindings.SHOW_HELP}>",
+            lambda e: self.window._show_keyboard_shortcuts(),
+        )
+        self.root.bind(
+            f"<{KeyBindings.SHOW_INFO}>", lambda e: self._show_info_overlay()
+        )
+
+        # Platform-specific modifier keys
+        if platform.system() == "Darwin":
+            # macOS uses Command key
+            self.root.bind("<Command-n>", lambda e: self._new_session())
+            self.root.bind("<Command-N>", lambda e: self._new_session())
+            self.root.bind("<Command-o>", lambda e: self._open_session())
+            self.root.bind("<Command-O>", lambda e: self._open_session())
+            self.root.bind("<Command-i>", lambda e: self._show_session_settings())
+            self.root.bind("<Command-I>", lambda e: self._show_session_settings())
+            self.root.bind("<Command-q>", lambda e: self._quit())
+            self.root.bind("<Command-Q>", lambda e: self._quit())
+        else:
+            # Windows/Linux use Control key
+            self.root.bind("<Control-n>", lambda e: self._new_session())
+            self.root.bind("<Control-N>", lambda e: self._new_session())
+            self.root.bind("<Control-o>", lambda e: self._open_session())
+            self.root.bind("<Control-O>", lambda e: self._open_session())
+            self.root.bind("<Control-i>", lambda e: self._show_session_settings())
+            self.root.bind("<Control-I>", lambda e: self._show_session_settings())
+            self.root.bind("<Control-q>", lambda e: self._quit())
+            self.root.bind("<Control-Q>", lambda e: self._quit())
 
         # Window close event
         self.root.protocol("WM_DELETE_WINDOW", self._quit)
-        # macOS Command+Q should quit like 'q'
-        try:
-            self.root.bind_all('<Command-q>', lambda e: self._quit())
-            self.root.bind_all('<Command-Q>', lambda e: self._quit())
-        except Exception:
-            pass
 
     def _start_processes(self) -> None:
         """Start background processes."""
         # Recording process with hardware synchronization
         self.record_process = mp.Process(
             target=record_process,
-            args=(self.config.audio, self.audio_queue, self.shared_state.name,
-                  self.record_queue, self.manager_dict, self.shutdown_event)
+            args=(
+                self.config.audio,
+                self.audio_queue,
+                self.shared_state.name,
+                self.record_queue,
+                self.manager_dict,
+                self.shutdown_event,
+            ),
         )
         self.record_process.start()
 
         # Playback process with hw synchronization
         self.playback_process = mp.Process(
             target=playback_process,
-            args=(self.config.audio, self.playback_queue, self.shared_state.name, self.shutdown_event)
+            args=(
+                self.config.audio,
+                self.playback_queue,
+                self.shared_state.name,
+                self.shutdown_event,
+            ),
         )
         self.playback_process.start()
 
-
     def _start_audio_queue_processing(self) -> None:
         """Start processing audio queue for real-time display."""
-        self.manager_dict['audio_queue_active'] = True
+        self.manager_dict["audio_queue_active"] = True
 
         # Start a transfer thread
         def audio_transfer_thread():
@@ -367,7 +493,7 @@ class Revoxx:
                 while True:
                     # Check active flag with guard; manager may already be gone
                     try:
-                        active = self.manager_dict.get('audio_queue_active', False)
+                        active = self.manager_dict.get("audio_queue_active", False)
                     except Exception:
                         break
                     if not active:
@@ -377,9 +503,17 @@ class Revoxx:
                         audio_data = self.audio_queue.get(timeout=0.1)
 
                         # Update mel spectrogram if visible
-                        if hasattr(self.window, 'mel_spectrogram') and self.window.ui_state.spectrogram_visible:
+                        if (
+                            hasattr(self.window, "mel_spectrogram")
+                            and self.window.ui_state.spectrogram_visible
+                        ):
                             # Use after() to update in main thread
-                            self.root.after(0, lambda data=audio_data: self.window.mel_spectrogram.update_audio(data))
+                            self.root.after(
+                                0,
+                                lambda data=audio_data: self.window.mel_spectrogram.update_audio(
+                                    data
+                                ),
+                            )
 
                     except queue.Empty:
                         # Timeout is normal, just continue
@@ -399,7 +533,6 @@ class Revoxx:
         self.transfer_thread.daemon = True
         self.transfer_thread.start()
 
-
     def _toggle_recording(self) -> None:
         """Toggle recording state."""
         if self.state.recording.is_recording:
@@ -413,10 +546,12 @@ class Revoxx:
         Args:
             mode: Must be either 'recording' or 'monitoring'
         """
-        if mode not in ('recording', 'monitoring'):
-            raise ValueError(f"Invalid mode: {mode}. Must be 'recording' or 'monitoring'")
+        if mode not in ("recording", "monitoring"):
+            raise ValueError(
+                f"Invalid mode: {mode}. Must be 'recording' or 'monitoring'"
+            )
 
-        is_recording = (mode == 'recording')
+        is_recording = mode == "recording"
 
         # Stop any active monitoring or playback
         if self.is_monitoring:
@@ -436,84 +571,100 @@ class Revoxx:
             # Increment take number and set save path
             take_num = self.state.recording.increment_take(current_label)
             save_path = self.file_manager.get_recording_path(current_label, take_num)
-            self.manager_dict['save_path'] = str(save_path)
+            self.manager_dict["save_path"] = str(save_path)
         else:
             # Monitoring-specific setup
             self.is_monitoring = True
             # Save current UI state
             self.saved_spectrogram_state = self.state.ui.spectrogram_visible
-            self.saved_level_meter_state = self.window.level_meter_var.get() if hasattr(self.window, 'level_meter_var') else False
+            self.saved_level_meter_state = (
+                self.window.level_meter_var.get()
+                if hasattr(self.window, "level_meter_var")
+                else False
+            )
 
             # Show both visualizations
             if not self.state.ui.spectrogram_visible:
                 self._toggle_mel_spectrogram()
-            if hasattr(self.window, 'level_meter_var') and not self.window.level_meter_var.get():
+            if (
+                hasattr(self.window, "level_meter_var")
+                and not self.window.level_meter_var.get()
+            ):
                 self.window._toggle_level_meter_callback()
-                self.settings_manager.update_setting('show_level_meter', True)
+                self.settings_manager.update_setting("show_level_meter", True)
                 self.root.update_idletasks()
 
             # Reset level meter when entering monitoring mode
-            if hasattr(self.window, 'embedded_level_meter') and self.window.embedded_level_meter:
+            if (
+                hasattr(self.window, "embedded_level_meter")
+                and self.window.embedded_level_meter
+            ):
                 try:
                     self.window.embedded_level_meter.reset()
                 except Exception:
                     pass
 
         # Clear and start spectrogram
-        if hasattr(self.window, 'mel_spectrogram'):
+        if hasattr(self.window, "mel_spectrogram"):
             self.window.mel_spectrogram.clear()
             self.window.mel_spectrogram.start_recording(self.config.audio.sample_rate)
 
         # Update info overlay
         if self.window.info_overlay.visible:
             recording_params = {
-                'sample_rate': self.config.audio.sample_rate,
-                'bit_depth': self.config.audio.bit_depth,
-                'channels': self.config.audio.channels
+                "sample_rate": self.config.audio.sample_rate,
+                "bit_depth": self.config.audio.bit_depth,
+                "channels": self.config.audio.channels,
             }
             self.window.info_overlay.show(
                 recording_params,
                 is_recording=True,
-                is_monitoring=(mode == 'monitoring')
+                is_monitoring=(mode == "monitoring"),
             )
 
         # If default input device is in effect and not yet notified, inform user once
         if self._default_input_in_effect and not self._notified_default_input:
             try:
-                self.window.show_message("Using system default input device (no saved/available selection)")
+                self.window.show_message(
+                    "Using system default input device (no saved/available selection)"
+                )
             except Exception:
                 pass
             self._notified_default_input = True
 
         # Preflight: quick rescan and availability check
         try:
-            refresh_devices_backend()
+            device_manager = get_device_manager()
+            device_manager.refresh()
         except Exception:
             pass
 
         # Verify selected input device still exists (if set)
         if self.config.audio.input_device is not None:
-            available = [d['index'] for d in list_input_devices()]
+            device_manager = get_device_manager()
+            available = [d["index"] for d in device_manager.get_input_devices()]
             if self.config.audio.input_device not in available:
                 # Device missing → message and fallback to default for this run
-                self.window.set_status("Selected input device not found. Using system default.")
+                self.window.set_status(
+                    "Selected input device not found. Using system default."
+                )
                 # Do not change persisted selection; just let record process try with None
-                self.record_queue.put({'action': 'set_input_device', 'index': None})
+                self.record_queue.put({"action": "set_input_device", "index": None})
 
         # Start audio capture
-        self.record_queue.put({'action': 'start'})
+        self.record_queue.put({"action": "start"})
 
         # Update UI
         if is_recording:
             self._update_display()
         else:
             self.window.set_status("Monitoring input levels...")
-            if hasattr(self.window, 'monitoring_var'):
+            if hasattr(self.window, "monitoring_var"):
                 self.window.monitoring_var.set(True)
 
     def _start_recording(self) -> None:
         """Start recording."""
-        self._start_audio_capture('recording')
+        self._start_audio_capture("recording")
 
     def _stop_audio_capture(self, mode: str) -> None:
         """Stop audio capture in recording or monitoring mode.
@@ -521,14 +672,16 @@ class Revoxx:
         Args:
             mode: Must be either 'recording' or 'monitoring'
         """
-        if mode not in ('recording', 'monitoring'):
-            raise ValueError(f"Invalid mode: {mode}. Must be 'recording' or 'monitoring'")
+        if mode not in ("recording", "monitoring"):
+            raise ValueError(
+                f"Invalid mode: {mode}. Must be 'recording' or 'monitoring'"
+            )
 
-        is_recording = (mode == 'recording')
+        is_recording = mode == "recording"
 
         # Stop audio capture & spectrogram
-        self.record_queue.put({'action': 'stop'})
-        if hasattr(self.window, 'mel_spectrogram'):
+        self.record_queue.put({"action": "stop"})
+        if hasattr(self.window, "mel_spectrogram"):
             self.window.mel_spectrogram.stop_recording()
 
         # Recording-specific cleanup
@@ -544,7 +697,9 @@ class Revoxx:
 
                 # Wait a bit for the file to be saved by the recording process
                 # then load and display the recording
-                self.root.after(UIConstants.POST_RECORDING_DELAY_MS, self._show_saved_recording)
+                self.root.after(
+                    UIConstants.POST_RECORDING_DELAY_MS, self._show_saved_recording
+                )
 
             # Update display
             self._update_display()
@@ -552,16 +707,24 @@ class Revoxx:
             # Update info overlay if visible to show the new recording
             if self.window.info_overlay.visible:
                 # Wait a bit for the file to be saved
-                self.root.after(UIConstants.POST_RECORDING_DELAY_MS, self._update_info_overlay)
+                self.root.after(
+                    UIConstants.POST_RECORDING_DELAY_MS, self._update_info_overlay
+                )
         else:
             # Monitoring-specific cleanup
             self.is_monitoring = False
 
             # Restore UI state
-            if self.saved_spectrogram_state is not None and self.saved_spectrogram_state != self.state.ui.spectrogram_visible:
+            if (
+                self.saved_spectrogram_state is not None
+                and self.saved_spectrogram_state != self.state.ui.spectrogram_visible
+            ):
                 self._toggle_mel_spectrogram()
 
-            if hasattr(self.window, 'level_meter_var') and self.saved_level_meter_state is not None:
+            if (
+                hasattr(self.window, "level_meter_var")
+                and self.saved_level_meter_state is not None
+            ):
                 current_state = self.window.level_meter_var.get()
                 if self.saved_level_meter_state != current_state:
                     self.window._toggle_level_meter_callback()
@@ -572,7 +735,7 @@ class Revoxx:
 
             # Update UI
             self.window.set_status("Ready")
-            if hasattr(self.window, 'monitoring_var'):
+            if hasattr(self.window, "monitoring_var"):
                 self.window.monitoring_var.set(False)
 
             # Show previous recording if one exists
@@ -584,7 +747,7 @@ class Revoxx:
 
     def _stop_recording(self) -> None:
         """Stop recording."""
-        self._stop_audio_capture('recording')
+        self._stop_audio_capture("recording")
 
     def _play_current(self) -> None:
         """Play current recording."""
@@ -599,7 +762,7 @@ class Revoxx:
         # Stop playback exactly like Left/Right keys do
         sd.stop()  # Immediate stop in main process
         self._stop_synchronized_playback()
-        if hasattr(self.window, 'mel_spectrogram'):
+        if hasattr(self.window, "mel_spectrogram"):
             self.window.mel_spectrogram.stop_playback()
 
         # Reset meter via shared state before starting a new playback
@@ -609,7 +772,9 @@ class Revoxx:
             pass
 
         # Give the playback process time to handle the stop command
-        time.sleep(UIConstants.PLAYBACK_STOP_DELAY)  # Small delay to ensure stop is processed
+        time.sleep(
+            UIConstants.PLAYBACK_STOP_DELAY
+        )  # Small delay to ensure stop is processed
         # Also clear playback status to IDLE
         try:
             self.shared_state.stop_playback()
@@ -622,29 +787,39 @@ class Revoxx:
         # If default output device is in effect and not yet notified, inform user once
         if self._default_output_in_effect and not self._notified_default_output:
             try:
-                self.window.show_message("Using system default output device (no saved/available selection)")
+                self.window.show_message(
+                    "Using system default output device (no saved/available selection)"
+                )
             except Exception:
                 pass
             self._notified_default_output = True
 
         # Additionally, warn once if last stream open failed or device likely unavailable
-        if hasattr(self, 'last_output_error') and self.last_output_error:
-            self.window.set_status("Output device unavailable. Using system default if possible.")
+        if hasattr(self, "last_output_error") and self.last_output_error:
+            self.window.set_status(
+                "Output device unavailable. Using system default if possible."
+            )
             self.last_output_error = False
 
         # Quick rescan before playback
         try:
-            refresh_devices_backend()
+            device_manager = get_device_manager()
+            device_manager.refresh()
         except Exception:
             pass
 
         # Verify selected output device still exists (if set)
         if self.config.audio.output_device is not None:
-            available = [d['index'] for d in list_output_devices()]
+            device_manager = get_device_manager()
+            available = [d["index"] for d in device_manager.get_output_devices()]
             if self.config.audio.output_device not in available:
-                self.window.set_status("Selected output device not found. Using system default.")
+                self.window.set_status(
+                    "Selected output device not found. Using system default."
+                )
                 try:
-                    self.playback_queue.put({'action': 'set_output_device', 'index': None}, block=False)
+                    self.playback_queue.put(
+                        {"action": "set_output_device", "index": None}, block=False
+                    )
                 except Exception:
                     pass
 
@@ -656,7 +831,10 @@ class Revoxx:
             duration = len(audio_data) / sr
 
             # Reset meter when starting playback of a file
-            if hasattr(self.window, 'embedded_level_meter') and self.window.embedded_level_meter:
+            if (
+                hasattr(self.window, "embedded_level_meter")
+                and self.window.embedded_level_meter
+            ):
                 try:
                     self.window.embedded_level_meter.reset()
                 except Exception:
@@ -666,21 +844,27 @@ class Revoxx:
             audio_buffer = self.buffer_manager.create_buffer(audio_data)
 
             # Send play command with buffer metadata
-            self.playback_queue.put({
-                'action': 'play',
-                'buffer_metadata': audio_buffer.get_metadata(),
-                'sample_rate': sr
-            })
+            self.playback_queue.put(
+                {
+                    "action": "play",
+                    "buffer_metadata": audio_buffer.get_metadata(),
+                    "sample_rate": sr,
+                }
+            )
 
             # Close our reference but don't unlink - buffer manager handles lifecycle
             audio_buffer.close()
 
             # Start animations
-            if hasattr(self.window, 'mel_spectrogram'):
+            if hasattr(self.window, "mel_spectrogram"):
                 self.window.mel_spectrogram.start_playback(duration, sr)
 
             # Update level meter for playback if visible
-            level_meter_visible = self.window.level_meter_var.get() if hasattr(self.window, 'level_meter_var') else False
+            level_meter_visible = (
+                self.window.level_meter_var.get()
+                if hasattr(self.window, "level_meter_var")
+                else False
+            )
             if level_meter_visible:
                 # Schedule periodic updates during playback
                 self._start_playback_level_monitoring(filepath)
@@ -692,7 +876,7 @@ class Revoxx:
             self._stop_recording()
 
         self._stop_synchronized_playback()
-        if hasattr(self.window, 'mel_spectrogram'):
+        if hasattr(self.window, "mel_spectrogram"):
             self.window.mel_spectrogram.stop_playback()
 
         # Reset level meter via shared state to ensure producer/consumer sync
@@ -724,7 +908,7 @@ class Revoxx:
 
         # Stop playback and animation
         self._stop_synchronized_playback()
-        if hasattr(self.window, 'mel_spectrogram'):
+        if hasattr(self.window, "mel_spectrogram"):
             self.window.mel_spectrogram.stop_playback()
 
         # Get current take and all existing takes
@@ -791,7 +975,7 @@ class Revoxx:
 
     def _show_saved_recording(self) -> None:
         """Display saved recording in spectrogram."""
-        if not hasattr(self.window, 'mel_spectrogram'):
+        if not hasattr(self.window, "mel_spectrogram"):
             return
 
         current_label = self.state.recording.current_label
@@ -803,7 +987,10 @@ class Revoxx:
         if current_take == 0:
             # No recording exists - clear the spectrogram and reset meter
             self.window.mel_spectrogram.clear()
-            if hasattr(self.window, 'embedded_level_meter') and self.window.embedded_level_meter:
+            if (
+                hasattr(self.window, "embedded_level_meter")
+                and self.window.embedded_level_meter
+            ):
                 try:
                     self.window.embedded_level_meter.reset()
                 except Exception:
@@ -843,16 +1030,18 @@ class Revoxx:
             self.root.after(50, self._show_saved_recording)
 
         # Save the preference
-        self.settings_manager.update_setting('show_spectrogram', self.state.ui.spectrogram_visible)
+        self.settings_manager.update_setting(
+            "show_spectrogram", self.state.ui.spectrogram_visible
+        )
 
         # Update menu checkbox if it exists
-        if hasattr(self.window, 'mel_spectrogram_var'):
+        if hasattr(self.window, "mel_spectrogram_var"):
             self.window.mel_spectrogram_var.set(self.state.ui.spectrogram_visible)
 
     def _toggle_level_meter(self) -> None:
         """Toggle level meter visibility."""
         # Toggle the embedded level meter in the main window
-        if hasattr(self.window, 'level_meter_var'):
+        if hasattr(self.window, "level_meter_var"):
             # Toggle the checkbox, which will trigger the callback
             current_state = self.window.level_meter_var.get()
             self.window.level_meter_var.set(not current_state)
@@ -862,7 +1051,7 @@ class Revoxx:
             self._update_audio_queue_state()
             # Start audio queue processing if needed and not already running
             show_meter = self.window.level_meter_var.get()
-            if show_meter and not self.manager_dict.get('audio_queue_active', False):
+            if show_meter and not self.manager_dict.get("audio_queue_active", False):
                 self._start_audio_queue_processing()
 
     def _toggle_monitoring(self) -> None:
@@ -872,22 +1061,25 @@ class Revoxx:
         else:
             self._start_monitoring_mode()
 
-
     def _start_monitoring_mode(self) -> None:
         """Start monitoring mode using record process without saving."""
-        self._start_audio_capture('monitoring')
+        self._start_audio_capture("monitoring")
 
     def _stop_monitoring_mode(self) -> None:
         """Stop monitoring mode - restore UI state."""
-        self._stop_audio_capture('monitoring')
+        self._stop_audio_capture("monitoring")
 
     def _update_audio_queue_state(self) -> None:
         """Update audio queue state based on whether any visualizations need audio."""
         # Audio queue is needed if either spectrogram or level meter is visible
-        level_meter_visible = self.window.level_meter_var.get() if hasattr(self.window, 'level_meter_var') else False
+        level_meter_visible = (
+            self.window.level_meter_var.get()
+            if hasattr(self.window, "level_meter_var")
+            else False
+        )
         needs_audio = self.state.ui.spectrogram_visible or level_meter_visible
 
-        self.manager_dict['audio_queue_active'] = needs_audio
+        self.manager_dict["audio_queue_active"] = needs_audio
 
     def _show_info_overlay(self) -> None:
         """Show audio info overlay with current recording information."""
@@ -895,56 +1087,66 @@ class Revoxx:
         if not current_label:
             # No utterance selected - show current settings
             recording_params = {
-                'sample_rate': self.config.audio.sample_rate,
-                'bit_depth': self.config.audio.bit_depth,
-                'channels': self.config.audio.channels
+                "sample_rate": self.config.audio.sample_rate,
+                "bit_depth": self.config.audio.bit_depth,
+                "channels": self.config.audio.channels,
             }
-            self.window.show_info_overlay(recording_params, self.state.recording.is_recording)
+            self.window.show_info_overlay(
+                recording_params, self.state.recording.is_recording
+            )
             # Save the setting
-            self.settings_manager.update_setting('show_info_overlay', self.window.info_overlay.visible)
+            self.settings_manager.update_setting(
+                "show_info_overlay", self.window.info_overlay.visible
+            )
             return
 
         if self.state.recording.is_recording:
             # Currently recording - show actual recording parameters
             recording_params = {
-                'sample_rate': self.config.audio.sample_rate,
-                'bit_depth': self.config.audio.bit_depth,
-                'channels': self.config.audio.channels
+                "sample_rate": self.config.audio.sample_rate,
+                "bit_depth": self.config.audio.bit_depth,
+                "channels": self.config.audio.channels,
             }
             self.window.show_info_overlay(recording_params, True)
         else:
             # Not recording - start with default settings
             recording_params = {
-                'sample_rate': self.config.audio.sample_rate,
-                'bit_depth': self.config.audio.bit_depth,
-                'channels': self.config.audio.channels
+                "sample_rate": self.config.audio.sample_rate,
+                "bit_depth": self.config.audio.bit_depth,
+                "channels": self.config.audio.channels,
             }
 
             # Try to get actual file info if a recording exists
             current_take = self.state.recording.get_current_take(current_label)
             if current_take > 0:
-                filepath = self.file_manager.get_recording_path(current_label, current_take)
+                filepath = self.file_manager.get_recording_path(
+                    current_label, current_take
+                )
                 if filepath.exists():
                     file_info = self.file_manager.get_file_info(filepath)
                     if file_info:
-                        sample_rate, bit_depth, format_name, channels, duration = file_info
+                        sample_rate, bit_depth, format_name, channels, duration = (
+                            file_info
+                        )
                         # Override with actual file parameters
                         recording_params = {
-                            'sample_rate': sample_rate,
-                            'bit_depth': bit_depth,
-                            'format': format_name,
-                            'channels': channels,
-                            'duration': duration,
-                            'size': filepath.stat().st_size
+                            "sample_rate": sample_rate,
+                            "bit_depth": bit_depth,
+                            "format": format_name,
+                            "channels": channels,
+                            "duration": duration,
+                            "size": filepath.stat().st_size,
                         }
 
             self.window.show_info_overlay(recording_params, False)
 
         # Save the setting after toggling
-        self.settings_manager.update_setting('show_info_overlay', self.window.info_overlay.visible)
+        self.settings_manager.update_setting(
+            "show_info_overlay", self.window.info_overlay.visible
+        )
 
         # Update menu checkbox if it exists
-        if hasattr(self.window, 'info_overlay_var'):
+        if hasattr(self.window, "info_overlay_var"):
             self.window.info_overlay_var.set(self.window.info_overlay.visible)
 
     def _update_info_overlay(self) -> None:
@@ -953,7 +1155,7 @@ class Revoxx:
         This is called when navigating to update the overlay without toggling it.
         """
         # Check if window is initialized
-        if not hasattr(self, 'window') or self.window is None:
+        if not hasattr(self, "window") or self.window is None:
             return
 
         current_label = self.state.recording.current_label
@@ -961,11 +1163,10 @@ class Revoxx:
             return
 
         recording_params = {
-            'sample_rate': self.config.audio.sample_rate,
-            'bit_depth': self.config.audio.bit_depth,
-            'channels': self.config.audio.channels
+            "sample_rate": self.config.audio.sample_rate,
+            "bit_depth": self.config.audio.bit_depth,
+            "channels": self.config.audio.channels,
         }
-
 
         current_take = self.state.recording.get_current_take(current_label)
         if current_take > 0:
@@ -976,12 +1177,12 @@ class Revoxx:
                 if file_info:
                     sample_rate, bit_depth, format_name, channels, duration = file_info
                     recording_params = {
-                        'sample_rate': sample_rate,
-                        'bit_depth': bit_depth,
-                        'format': format_name,
-                        'channels': channels,
-                        'duration': duration,
-                        'size': filepath.stat().st_size
+                        "sample_rate": sample_rate,
+                        "bit_depth": bit_depth,
+                        "format": format_name,
+                        "channels": channels,
+                        "duration": duration,
+                        "size": filepath.stat().st_size,
                     }
 
         self.window.info_overlay.show(recording_params, is_recording=False)
@@ -996,14 +1197,14 @@ class Revoxx:
 
         # Update struct shared state with new audio settings
         # Determine format type based on file extension constant
-        format_type = 1 if FileConstants.AUDIO_FILE_EXTENSION == '.flac' else 0
+        format_type = 1 if FileConstants.AUDIO_FILE_EXTENSION == ".flac" else 0
 
         # Update settings in shared memory
         self.shared_state.update_audio_settings(
             sample_rate=self.config.audio.sample_rate,
             bit_depth=self.config.audio.bit_depth,
             channels=self.config.audio.channels,
-            format_type=format_type
+            format_type=format_type,
         )
 
     def _set_input_device(self, index: int) -> None:
@@ -1013,16 +1214,19 @@ class Revoxx:
         """
         try:
             self.config.audio.input_device = index
-            name = get_device_name_by_index(index)
+            device_manager = get_device_manager()
+            name = device_manager.get_device_name_by_index(index)
             if name:
-                self.settings_manager.update_setting('input_device', name)
+                self.settings_manager.update_setting("input_device", name)
             self.window.set_status(f"Input device set to #{index}: {name or 'Unknown'}")
             # Since a specific device was chosen, default is no longer in effect
             self._default_input_in_effect = False
             self._notified_default_input = False
             # Propagate to recorder process for future recordings
             try:
-                self.record_queue.put({'action': 'set_input_device', 'index': index}, block=False)
+                self.record_queue.put(
+                    {"action": "set_input_device", "index": index}, block=False
+                )
             except Exception:
                 pass
         except Exception as e:
@@ -1032,15 +1236,21 @@ class Revoxx:
         """Set custom input channel mapping (None means device default)."""
         try:
             # Persist
-            self.settings_manager.update_setting('input_channel_mapping', mapping)
+            self.settings_manager.update_setting("input_channel_mapping", mapping)
             # No immediate restart; applies on next recording/monitoring start
-            label = "Device default" if mapping is None else f"Input channels: {[m+1 for m in mapping]}"
+            label = (
+                "Device default"
+                if mapping is None
+                else f"Input channels: {[m+1 for m in mapping]}"
+            )
             self.window.set_status(label)
         except Exception as e:
             self.window.set_status(f"Failed to set input channels: {e}")
         # Propagate mapping to record process
         try:
-            self.record_queue.put({'action': 'set_input_channel_mapping', 'mapping': mapping}, block=False)
+            self.record_queue.put(
+                {"action": "set_input_channel_mapping", "mapping": mapping}, block=False
+            )
         except Exception:
             pass
 
@@ -1051,15 +1261,20 @@ class Revoxx:
         """
         try:
             self.config.audio.output_device = index
-            name = get_device_name_by_index(index)
+            device_manager = get_device_manager()
+            name = device_manager.get_device_name_by_index(index)
             if name:
-                self.settings_manager.update_setting('output_device', name)
-            self.window.set_status(f"Output device set to #{index}: {name or 'Unknown'}")
+                self.settings_manager.update_setting("output_device", name)
+            self.window.set_status(
+                f"Output device set to #{index}: {name or 'Unknown'}"
+            )
             self._default_output_in_effect = False
             self._notified_default_output = False
             # Propagate to playback process for future playback
             try:
-                self.playback_queue.put({'action': 'set_output_device', 'index': index}, block=False)
+                self.playback_queue.put(
+                    {"action": "set_output_device", "index": index}, block=False
+                )
             except Exception:
                 pass
         except Exception as e:
@@ -1068,24 +1283,30 @@ class Revoxx:
     def _set_output_channel_mapping(self, mapping: Optional[list]) -> None:
         """Set custom output channel mapping for mono playback (None means default)."""
         try:
-            self.settings_manager.update_setting('output_channel_mapping', mapping)
-            label = "Device default" if mapping is None else f"Output channel: {mapping[0]+1 if mapping else ''}"
+            self.settings_manager.update_setting("output_channel_mapping", mapping)
+            label = (
+                "Device default"
+                if mapping is None
+                else f"Output channel: {mapping[0]+1 if mapping else ''}"
+            )
             self.window.set_status(label)
         except Exception as e:
             self.window.set_status(f"Failed to set output channels: {e}")
         # Propagate mapping to playback process
         try:
-            self.playback_queue.put({'action': 'set_output_channel_mapping', 'mapping': mapping}, block=False)
+            self.playback_queue.put(
+                {"action": "set_output_channel_mapping", "mapping": mapping},
+                block=False,
+            )
         except Exception:
             pass
-
 
     def _delete_current_recording(self) -> None:
         """Delete the current recording take."""
         # Stop any playback first
         sd.stop()
         self._stop_synchronized_playback()
-        if hasattr(self.window, 'mel_spectrogram'):
+        if hasattr(self.window, "mel_spectrogram"):
             self.window.mel_spectrogram.stop_playback()
 
         current_label = self.state.recording.current_label
@@ -1140,16 +1361,18 @@ class Revoxx:
     def _update_display(self) -> None:
         """Update the main display."""
         self.window.update_display(
-            self.state.recording.current_index,
-            self.state.recording.is_recording
+            self.state.recording.current_index, self.state.recording.is_recording
         )
         self._update_take_status()
 
     def _stop_synchronized_playback(self) -> None:
         """Stop synchronized playback."""
-        self.playback_queue.put({'action': 'stop'})
+        self.playback_queue.put({"action": "stop"})
         # Also reset level meter when playback stops
-        if hasattr(self.window, 'embedded_level_meter') and self.window.embedded_level_meter:
+        if (
+            hasattr(self.window, "embedded_level_meter")
+            and self.window.embedded_level_meter
+        ):
             try:
                 self.window.embedded_level_meter.reset()
             except Exception:
@@ -1166,13 +1389,170 @@ class Revoxx:
         # or audio output to update the level meter
         pass
 
+    def _new_session(self):
+        """Handle new session creation."""
+        # Determine default base directory
+        default_base_dir = None
+        if self.current_session:
+            default_base_dir = self.current_session.session_dir.parent
+        else:
+            # Try to get from settings
+            default_base_dir = self.session_manager.get_default_base_dir()
+
+        if not default_base_dir:
+            default_base_dir = Path.cwd()  # Fallback to current working directory
+
+        dialog = NewSessionDialog(
+            self.root,
+            default_base_dir,
+            self.config.audio.sample_rate,
+            self.config.audio.bit_depth,
+            self.config.audio.input_device,
+        )
+        result = dialog.show()
+
+        if result:
+            try:
+                # Create new session
+                new_session = self.session_manager.create_session(
+                    base_dir=result.base_dir,
+                    speaker_name=result.speaker_name,
+                    gender=result.gender,
+                    emotion=result.emotion,
+                    audio_config=SessionConfig(
+                        sample_rate=result.sample_rate,
+                        bit_depth=result.bit_depth,
+                        channels=1,
+                        format=result.recording_format.upper(),
+                        input_device=result.input_device,
+                    ),
+                    script_source=result.script_path,
+                    custom_dir_name=result.custom_dir_name,
+                )
+
+                # Load the new session
+                self._load_session(new_session)
+
+                # Update window title
+                self.window.update_session_title(new_session.session_dir.name)
+
+                # Update status
+                self.window.set_status(
+                    f"Created new session: {new_session.session_dir.name}"
+                )
+
+            except Exception as e:
+                self.window.set_status(f"Error creating session: {e}")
+
+    def _open_session(self):
+        """Handle opening an existing session."""
+        from tkinter import filedialog
+
+        # Browse for .revoxx directory
+        session_dir = filedialog.askdirectory(
+            parent=self.root,
+            title="Select Session Directory (.revoxx)",
+            initialdir=str(
+                self.current_session.session_dir.parent
+                if self.current_session
+                else Path.home()
+            ),
+        )
+
+        if session_dir:
+            session_path = Path(session_dir)
+            if session_path.name.endswith(".revoxx"):
+                self._open_recent_session(session_path)
+            else:
+                self.window.set_status("Please select a .revoxx directory")
+
+    def _open_recent_session(self, session_path: Path):
+        """Open a session from recent sessions list."""
+        try:
+            # Load session
+            session = self.session_manager.load_session(session_path)
+
+            # Load the session
+            self._load_session(session)
+
+            # Update window title
+            self.window.update_session_title(session.session_dir.name)
+
+            # Update recent sessions menu
+            self.window._update_recent_sessions_menu()
+
+            # Update status
+            self.window.set_status(f"Loaded session: {session.session_dir.name}")
+
+        except Exception as e:
+            self.window.set_status(f"Error loading session: {e}")
+
+    def _get_recent_sessions(self):
+        """Get list of recent sessions."""
+        return self.session_manager.get_recent_sessions()
+
+    def _get_current_session(self):
+        """Get the current session."""
+        return self.current_session
+
+    def _show_session_settings(self):
+        """Show the session settings dialog."""
+        self.window._show_session_settings()
+
+    def _load_session(self, session: Session):
+        """Load a session and update the application state."""
+        self.current_session = session
+
+        # Update paths
+        self.script_file = session.session_dir / SessionManager.SCRIPT_FILE
+        self.recording_dir = session.session_dir / "recordings"
+
+        # Initialize or reinitialize file manager with new recording dir
+        self.file_manager = RecordingFileManager(self.recording_dir)
+
+        # Load script and scan recordings
+        self._reload_script_and_recordings()
+
+        # Apply session audio config to runtime config
+        if session.audio_config:
+            self.config.audio.sample_rate = session.audio_config.sample_rate
+            self.config.audio.bit_depth = session.audio_config.bit_depth
+            self.config.audio.__post_init__()  # Update dtype and subtype
+
+            # Update settings manager with new audio settings
+            self.settings_manager.update_setting(
+                "sample_rate", self.config.audio.sample_rate
+            )
+            self.settings_manager.update_setting(
+                "bit_depth", self.config.audio.bit_depth
+            )
+
+            # Update shared state with new audio settings
+            format_type = 1 if FileConstants.AUDIO_FILE_EXTENSION == ".flac" else 0
+            self.shared_state.update_audio_settings(
+                sample_rate=self.config.audio.sample_rate,
+                bit_depth=self.config.audio.bit_depth,
+                channels=self.config.audio.channels,
+                format_type=format_type,
+            )
+
+            # Update info overlay if it's visible
+            if self.window.info_overlay.visible:
+                self._update_info_overlay()
+
+            # Reinitialize audio if needed
+            if hasattr(self, "recorder"):
+                self._update_audio_settings()
+
     def _quit(self) -> None:
         """Clean shutdown of the application."""
         print("Shutting down...")
 
         # Save window geometry if not fullscreen
-        if not self.root.attributes('-fullscreen'):
-            self.settings_manager.update_setting('window_geometry', self.root.geometry())
+        if not self.root.attributes("-fullscreen"):
+            self.settings_manager.update_setting(
+                "window_geometry", self.root.geometry()
+            )
 
         # Stop recording if active
         if self.state.recording.is_recording:
@@ -1184,16 +1564,16 @@ class Revoxx:
 
         # Stop audio queue processing (guard manager might be gone)
         try:
-            self.manager_dict['audio_queue_active'] = False
+            self.manager_dict["audio_queue_active"] = False
         except Exception:
             pass
 
         # Stop any playback monitoring
-        if hasattr(self, '_playback_monitor_active'):
+        if hasattr(self, "_playback_monitor_active"):
             self._playback_monitor_active = False
 
         # Clean up struct shared state
-        if hasattr(self, 'shared_state'):
+        if hasattr(self, "shared_state"):
             try:
                 self.shared_state.close()
             except Exception:
@@ -1204,16 +1584,16 @@ class Revoxx:
                 pass
 
         # Wait for audio transfer thread to finish
-        if hasattr(self, 'transfer_thread') and self.transfer_thread.is_alive():
+        if hasattr(self, "transfer_thread") and self.transfer_thread.is_alive():
             self.transfer_thread.join(timeout=0.5)
 
         # Stop processes
         try:
-            self.record_queue.put({'action': 'quit'}, block=False)
+            self.record_queue.put({"action": "quit"}, block=False)
         except Exception as e:
             print(f"record_queue.put quit failed: {e}")
         try:
-            self.playback_queue.put({'action': 'quit'}, block=False)
+            self.playback_queue.put({"action": "quit"}, block=False)
         except Exception as e:
             print(f"playback_queue.put quit failed: {e}")
 
@@ -1239,18 +1619,20 @@ class Revoxx:
 
         # Force kill if absolutely necessary
         try:
-            if self.record_process.is_alive() and hasattr(self.record_process, 'kill'):
+            if self.record_process.is_alive() and hasattr(self.record_process, "kill"):
                 self.record_process.kill()
         except Exception as e:
             print(f"kill record_process failed: {e}")
         try:
-            if self.playback_process.is_alive() and hasattr(self.playback_process, 'kill'):
+            if self.playback_process.is_alive() and hasattr(
+                self.playback_process, "kill"
+            ):
                 self.playback_process.kill()
         except Exception as e:
             print(f"kill playback_process failed: {e}")
 
         # Clean up all shared memory buffers after processes are done
-        if hasattr(self, 'buffer_manager'):
+        if hasattr(self, "buffer_manager"):
             self.buffer_manager.cleanup_all(wait_time=0.15)
 
         # Close queues and manager
@@ -1282,128 +1664,94 @@ def parse_arguments() -> argparse.Namespace:
 
     Returns:
         argparse.Namespace: Parsed command line arguments including:
-            - script: Path to recording script file
-            - recdir: Output directory for recordings
+            - session: Path to session directory (.revoxx)
             - audio settings: devices, sample rate, channels, bit depth
-            - display settings: spectrogram visibility
             - UI settings: window size, fullscreen, font size
     """
     # Create default config to get default values
     default_config = RecorderConfig()
 
     parser = argparse.ArgumentParser(
-        description="Graphical interface for recording utterances from a script with real-time feedback",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        description="Revoxx - Speech recording application",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    # Input/output files
-    io = parser.add_argument_group('input/output files')
-    io.add_argument(
-        '--script',
-        type=str,
-        default='utts.data',
-        help='recording script in Festival data format'
-    )
-    io.add_argument(
-        '--recdir',
-        type=str,
-        default='recordings',
-        help='output directory for recorded audio files'
+    # Session management
+    session = parser.add_argument_group("session management")
+    session.add_argument(
+        "--session", type=str, help="path to session directory (.revoxx)"
     )
 
     # Audio configuration
-    audio = parser.add_argument_group('audio configuration')
+    audio = parser.add_argument_group("audio configuration")
     audio.add_argument(
-        '--show-devices',
-        action='store_true',
-        help='show available audio devices and exit'
+        "--show-devices",
+        action="store_true",
+        help="show available audio devices and exit",
     )
     audio.add_argument(
-        '--audio-device',
+        "--audio-device",
         type=str,
-        help='audio device name (sets both input and output)'
+        help="audio device name (sets both input and output)",
     )
     audio.add_argument(
-        '--audio-in',
-        type=str,
-        default=None,
-        help='input device index or name'
+        "--audio-in", type=str, default=None, help="input device index or name"
     )
     audio.add_argument(
-        '--audio-out',
-        type=str,
-        default=None,
-        help='output device index or name'
+        "--audio-out", type=str, default=None, help="output device index or name"
     )
     audio.add_argument(
-        '--channels',
+        "--channels",
         type=int,
         default=default_config.audio.channels,
-        help='n channels to record: 1 for mono, 2 for stereo'
+        help="n channels to record: 1 for mono, 2 for stereo",
     )
     audio.add_argument(
-        '--sr',
+        "--sr",
         type=int,
         default=default_config.audio.sample_rate,
-        help='sampling rate to record'
+        help="sampling rate to record",
     )
     audio.add_argument(
-        '--bits',
+        "--bits",
         type=int,
         choices=[16, 24],
         default=default_config.audio.bit_depth,
-        help='bit depth, default=24, can be set to 16'
+        help="bit depth, default=24, can be set to 16",
     )
     audio.add_argument(
-        '--start-idx',
-        type=int,
-        default=0,
-        help='starting index (not id) of UI'
+        "--start-idx", type=int, default=0, help="starting index (not id) of UI"
     )
 
     # UI configuration
-    ui = parser.add_argument_group('UI configuration')
+    ui = parser.add_argument_group("UI configuration")
     ui.add_argument(
-        '--fullscreen',
-        action='store_true',
-        help='start in fullscreen mode'
+        "--fullscreen", action="store_true", help="start in fullscreen mode"
     )
     ui.add_argument(
-        '--width',
-        type=int,
-        help='window width (pixels or percentage if <= 100)'
+        "--width", type=int, help="window width (pixels or percentage if <= 100)"
     )
     ui.add_argument(
-        '--height',
-        type=int,
-        help='window height (pixels or percentage if <= 100)'
+        "--height", type=int, help="window height (pixels or percentage if <= 100)"
     )
     ui.add_argument(
-        '--monitor',
+        "--monitor",
         type=int,
         default=default_config.ui.monitor,
-        help='monitor index for fullscreen'
+        help="monitor index for fullscreen",
     )
     ui.add_argument(
-        '--font-size',
+        "--font-size",
         type=int,
         default=default_config.ui.base_font_size,
-        help='base font size'
+        help="base font size",
     )
 
     # Configuration file
-    parser.add_argument(
-        '--config',
-        type=Path,
-        help='path to configuration file'
-    )
+    parser.add_argument("--config", type=Path, help="path to configuration file")
 
     # Debug mode
-    parser.add_argument(
-        '--debug',
-        action='store_true',
-        help='enable debug output'
-    )
+    parser.add_argument("--debug", action="store_true", help="enable debug output")
 
     return parser.parse_args()
 
@@ -1420,17 +1768,21 @@ def show_audio_devices():
     devices = sd.query_devices()
     for i, device in enumerate(devices):
         device_type = []
-        if device['max_input_channels'] > 0:
+        if device["max_input_channels"] > 0:
             device_type.append("INPUT")
-        if device['max_output_channels'] > 0:
+        if device["max_output_channels"] > 0:
             device_type.append("OUTPUT")
         print(f"{i}: {device['name']} [{', '.join(device_type)}]")
-        print(f"   Channels: in={device['max_input_channels']}, out={device['max_output_channels']}")
+        print(
+            f"   Channels: in={device['max_input_channels']}, out={device['max_output_channels']}"
+        )
         print(f"   Sample rates: {device['default_samplerate']}Hz")
-        if device['default_low_input_latency'] > 0:
+        if device["default_low_input_latency"] > 0:
             print(f"   Input latency: {device['default_low_input_latency']*1000:.1f}ms")
-        if device['default_low_output_latency'] > 0:
-            print(f"   Output latency: {device['default_low_output_latency']*1000:.1f}ms")
+        if device["default_low_output_latency"] > 0:
+            print(
+                f"   Output latency: {device['default_low_output_latency']*1000:.1f}ms"
+            )
         print()
 
 
@@ -1460,7 +1812,7 @@ def parse_audio_device(device_str: str) -> Optional[int]:
     # Search by name
     devices = sd.query_devices()
     for i, device in enumerate(devices):
-        if device_str.lower() in device['name'].lower():
+        if device_str.lower() in device["name"].lower():
             return i
 
     print(f"Warning: Device '{device_str}' not found")
@@ -1475,8 +1827,8 @@ def main() -> None:
     Handles special modes like --show-devices for listing audio devices.
     """
     # Multiprocessing setup for macOS
-    if platform.system() == 'Darwin':
-        mp.set_start_method('spawn', force=True)
+    if platform.system() == "Darwin":
+        mp.set_start_method("spawn", force=True)
 
     # Set up signal handler for clean shutdown
     def signal_handler(signum, frame):
@@ -1531,19 +1883,38 @@ def main() -> None:
     config.ui.monitor = args.monitor
     config.ui.base_font_size = args.font_size
 
-    # Convert paths
-    script_file = Path(args.script)
-    recording_dir = Path(args.recdir)
+    # Handle session loading
+    session = None
+    session_manager = SessionManager()
+
+    if args.session:
+        # Load specified session
+        session_path = Path(args.session)
+        try:
+            session = session_manager.load_session(session_path)
+        except Exception as e:
+            print(f"Error loading session: {e}")
+            sys.exit(1)
+    else:
+        # Try to load last session
+        last_session_path = session_manager.get_last_session()
+        if last_session_path:
+            try:
+                session = session_manager.load_session(last_session_path)
+            except Exception:
+                # Last session not available, will need to create/select one
+                pass
 
     # Create and run application
-    app = Revoxx(config, script_file, recording_dir, debug=args.debug)
+    app = Revoxx(config, session, debug=args.debug)
 
-    # Set starting index
-    app.state.recording.current_index = args.start_idx
+    # Set starting index if we have a session
+    if session and hasattr(app.state, "recording"):
+        app.state.recording.current_index = args.start_idx
 
     # Run
     app.run()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

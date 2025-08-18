@@ -174,6 +174,7 @@ class KeyBindings:
 
     Defines all keyboard bindings for application control.
     Most keys use lowercase; special keys use Tkinter notation.
+    Platform-specific modifiers are handled at binding time.
     """
     RECORD = 'space'
     PLAY = 'p'
@@ -185,9 +186,13 @@ class KeyBindings:
     TOGGLE_LEVEL_METER = ['l', 'L']
     TOGGLE_MONITORING = 'o'
     DELETE_RECORDING = 'd'
-    QUIT = 'q'
     TOGGLE_FULLSCREEN = 'F10'
     SHOW_HELP = 'h'
     SHOW_INFO = 'i'
+
+    # Session management - use platform-specific modifier
+    NEW_SESSION = 'n'  # Ctrl/Cmd+N
+    OPEN_SESSION = 'o'  # Ctrl/Cmd+O
+    QUIT = 'q'  # Ctrl/Cmd+Q
 
 
