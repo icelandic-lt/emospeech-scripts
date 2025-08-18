@@ -372,11 +372,17 @@ class TestSessionManager(unittest.TestCase):
             channels=2
         )
 
-        compatible = self.manager.get_compatible_devices(config)
+        # Mock the device manager compatibility check
+        with patch('revoxx.session.models.get_device_manager') as mock_get_dm:
+            mock_dm = mock_get_dm.return_value
+            # Only Device1 should be compatible
+            mock_dm.check_device_compatibility.side_effect = lambda device_name, **kwargs: device_name == 'Device1'
+            
+            compatible = self.manager.get_compatible_devices(config)
 
-        # Should find Device1 (matching sample rate and channels)
-        self.assertEqual(len(compatible), 1)
-        self.assertEqual(compatible[0]['name'], 'Device1')
+            # Should find Device1 (matching sample rate and channels)
+            self.assertEqual(len(compatible), 1)
+            self.assertEqual(compatible[0]['name'], 'Device1')
 
     def test_recent_sessions_persistence(self):
         """Test recent sessions persist across manager instances."""

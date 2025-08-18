@@ -31,7 +31,7 @@ class TestNewSessionDialog(unittest.TestCase):
 
     def test_dialog_creation(self):
         """Test that dialog is created correctly."""
-        dialog = NewSessionDialog(self.root, Path(self.temp_dir))
+        dialog = NewSessionDialog(self.root, Path(self.temp_dir), 48000, 24)
 
         # Check that dialog exists
         self.assertIsNotNone(dialog.dialog)
@@ -46,7 +46,7 @@ class TestNewSessionDialog(unittest.TestCase):
 
     def test_validation_empty_fields(self):
         """Test validation with empty required fields."""
-        dialog = NewSessionDialog(self.root, Path(self.temp_dir))
+        dialog = NewSessionDialog(self.root, Path(self.temp_dir), 48000, 24)
 
         # Try to validate with empty fields
         with patch('tkinter.messagebox.showerror') as mock_error:
@@ -63,7 +63,7 @@ class TestNewSessionDialog(unittest.TestCase):
 
     def test_validation_nonexistent_script(self):
         """Test validation with non-existent script file."""
-        dialog = NewSessionDialog(self.root, Path(self.temp_dir))
+        dialog = NewSessionDialog(self.root, Path(self.temp_dir), 48000, 24)
 
         # Set speaker name and non-existent script path
         dialog.speaker_name_var.set("Test Speaker")
@@ -82,7 +82,7 @@ class TestNewSessionDialog(unittest.TestCase):
 
     def test_successful_data_collection(self):
         """Test successful data collection from dialog."""
-        dialog = NewSessionDialog(self.root, Path(self.temp_dir))
+        dialog = NewSessionDialog(self.root, Path(self.temp_dir), 48000, 24)
 
         # Set valid data
         dialog.speaker_name_var.set("Test Speaker")
@@ -106,7 +106,7 @@ class TestNewSessionDialog(unittest.TestCase):
 
     def test_cancel_returns_none(self):
         """Test that cancelling returns None."""
-        dialog = NewSessionDialog(self.root, Path(self.temp_dir))
+        dialog = NewSessionDialog(self.root, Path(self.temp_dir), 48000, 24)
 
         # Simulate Cancel button click
         dialog._on_cancel()
@@ -116,7 +116,7 @@ class TestNewSessionDialog(unittest.TestCase):
 
     def test_empty_custom_dir_is_none(self):
         """Test that empty custom directory becomes None."""
-        dialog = NewSessionDialog(self.root, Path(self.temp_dir))
+        dialog = NewSessionDialog(self.root, Path(self.temp_dir), 48000, 24)
 
         # Set valid data with empty custom dir
         dialog.speaker_name_var.set("Test Speaker")
@@ -132,7 +132,7 @@ class TestNewSessionDialog(unittest.TestCase):
 
     def test_whitespace_trimming(self):
         """Test that whitespace is trimmed from inputs."""
-        dialog = NewSessionDialog(self.root, Path(self.temp_dir))
+        dialog = NewSessionDialog(self.root, Path(self.temp_dir), 48000, 24)
 
         # Set data with extra whitespace
         dialog.speaker_name_var.set("  Test Speaker  ")

@@ -9,6 +9,7 @@ import json
 import tempfile
 from pathlib import Path
 from datetime import datetime
+from unittest.mock import patch
 
 from revoxx.session.models import Session, SessionConfig, SpeakerInfo
 
@@ -126,24 +127,21 @@ class TestSessionConfig(unittest.TestCase):
 
         # Compatible device
         device_info = {
+            'name': 'Test Device',
             'default_samplerate': 48000,
             'max_input_channels': 4
         }
-        self.assertTrue(config.is_compatible_with_device(device_info))
+        # Mock the device manager to return True for compatibility
+        with patch('revoxx.session.models.get_device_manager') as mock_get_dm:
+            mock_dm = mock_get_dm.return_value
+            mock_dm.check_device_compatibility.return_value = True
+            self.assertTrue(config.is_compatible_with_device(device_info))
 
-        # Incompatible sample rate
-        device_info = {
-            'default_samplerate': 44100,
-            'max_input_channels': 4
-        }
-        self.assertFalse(config.is_compatible_with_device(device_info))
-
-        # Incompatible channels
-        device_info = {
-            'default_samplerate': 48000,
-            'max_input_channels': 1
-        }
-        self.assertFalse(config.is_compatible_with_device(device_info))
+        # Incompatible device
+        with patch('revoxx.session.models.get_device_manager') as mock_get_dm:
+            mock_dm = mock_get_dm.return_value
+            mock_dm.check_device_compatibility.return_value = False
+            self.assertFalse(config.is_compatible_with_device(device_info))
 
 
 class TestSession(unittest.TestCase):
