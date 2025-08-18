@@ -144,6 +144,10 @@ class Revoxx:
         # Initial display update
         self._update_display()
 
+        # Set window title if we have a session
+        if self.current_session and self.current_session.name:
+            self.window.update_session_title(self.current_session.name)
+
         # Load initial spectrogram after UI is ready
         if hasattr(self.window, "mel_spectrogram"):
             self.root.after(
