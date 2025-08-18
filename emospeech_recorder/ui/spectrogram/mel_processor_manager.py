@@ -1,11 +1,10 @@
 """Manager for coordinating mel processor updates across components."""
 
-from typing import Optional, Tuple
+from typing import Tuple
 import numpy as np
 
 from ...audio.mel_factory import MelProcessorFactory
 from ...audio.processors import MelSpectrogramProcessor
-from ...constants import AudioConstants
 from .display_utils import create_empty_spectrogram
 
 
@@ -36,7 +35,9 @@ class MelProcessorManager:
         self.recording_n_mels = self.n_mels
         self.recording_fmax = initial_sample_rate / 2
 
-    def update_sample_rate(self, new_sample_rate: int) -> Tuple[MelSpectrogramProcessor, int, dict]:
+    def update_sample_rate(
+        self, new_sample_rate: int
+    ) -> Tuple[MelSpectrogramProcessor, int, dict]:
         """Update mel processor for a new sample rate.
 
         Args:
@@ -50,15 +51,21 @@ class MelProcessorManager:
                 - params: All calculated parameters
         """
         old_n_mels = self.n_mels
-        old_sample_rate = self.current_sample_rate
+        self.current_sample_rate
 
         # Check if update is needed
         if new_sample_rate == self.current_sample_rate:
-            return self.mel_processor, self.n_mels, {
-                'old_n_mels': old_n_mels,
-                'needs_display_update': False,
-                'params': MelProcessorFactory.calculate_adaptive_params(new_sample_rate, self.fmin)
-            }
+            return (
+                self.mel_processor,
+                self.n_mels,
+                {
+                    "old_n_mels": old_n_mels,
+                    "needs_display_update": False,
+                    "params": MelProcessorFactory.calculate_adaptive_params(
+                        new_sample_rate, self.fmin
+                    ),
+                },
+            )
 
         # Create new processor
         new_processor, new_n_mels = MelProcessorFactory.create_for_sample_rate(
@@ -66,7 +73,9 @@ class MelProcessorManager:
         )
 
         # Get parameters for additional info
-        params = MelProcessorFactory.calculate_adaptive_params(new_sample_rate, self.fmin)
+        params = MelProcessorFactory.calculate_adaptive_params(
+            new_sample_rate, self.fmin
+        )
 
         # Update internal state
         self.mel_processor = new_processor
@@ -76,13 +85,17 @@ class MelProcessorManager:
         # Update recording parameters
         self.recording_sample_rate = new_sample_rate
         self.recording_n_mels = new_n_mels
-        self.recording_fmax = params['fmax']
+        self.recording_fmax = params["fmax"]
 
-        return new_processor, new_n_mels, {
-            'old_n_mels': old_n_mels,
-            'needs_display_update': (old_n_mels != new_n_mels),
-            'params': params
-        }
+        return (
+            new_processor,
+            new_n_mels,
+            {
+                "old_n_mels": old_n_mels,
+                "needs_display_update": (old_n_mels != new_n_mels),
+                "params": params,
+            },
+        )
 
     def create_empty_display(self, spec_frames: int) -> np.ndarray:
         """Create empty display data with current mel configuration.
@@ -102,9 +115,9 @@ class MelProcessorManager:
             Dictionary with recording_n_mels, recording_sample_rate, recording_fmax
         """
         return {
-            'n_mels': self.recording_n_mels,
-            'sample_rate': self.recording_sample_rate,
-            'fmax': self.recording_fmax
+            "n_mels": self.recording_n_mels,
+            "sample_rate": self.recording_sample_rate,
+            "fmax": self.recording_fmax,
         }
 
     def reset_to_default(self, default_sample_rate: int) -> None:

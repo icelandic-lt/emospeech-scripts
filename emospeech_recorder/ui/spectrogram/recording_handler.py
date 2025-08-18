@@ -19,10 +19,15 @@ class RecordingHandler:
     - Frame accumulation for zoom/playback
     """
 
-    def __init__(self, mel_processor: MelSpectrogramProcessor,
-                 clipping_detector: ClippingDetector,
-                 clipping_visualizer: ClippingVisualizer,
-                 spec_frames: int, n_mels: int, sample_rate: int):
+    def __init__(
+        self,
+        mel_processor: MelSpectrogramProcessor,
+        clipping_detector: ClippingDetector,
+        clipping_visualizer: ClippingVisualizer,
+        spec_frames: int,
+        n_mels: int,
+        sample_rate: int,
+    ):
         """Initialize recording handler.
 
         Args:
@@ -47,7 +52,6 @@ class RecordingHandler:
         self.buffer_size = int(UIConstants.SPECTROGRAM_DISPLAY_SECONDS * sample_rate)
         self.audio_buffer = np.zeros(self.buffer_size)
         self.buffer_position = 0
-
 
         # Recording state
         self.is_recording = False
@@ -123,7 +127,9 @@ class RecordingHandler:
 
         # Add new audio to buffer
         if self.buffer_position + chunk_size <= self.buffer_size:
-            self.audio_buffer[self.buffer_position:self.buffer_position + chunk_size] = audio_chunk
+            self.audio_buffer[
+                self.buffer_position : self.buffer_position + chunk_size
+            ] = audio_chunk
         else:
             # Shift buffer left by the overflow amount
             self.audio_buffer[:-chunk_size] = self.audio_buffer[chunk_size:]
@@ -145,8 +151,11 @@ class RecordingHandler:
             if self.clipping_detector.process(frame):
                 clipping_pos = self.frame_count
                 current_markers = self.clipping_visualizer.clipping_markers
-                if (not current_markers or
-                    clipping_pos - current_markers[-1] > AudioConstants.MIN_CLIPPING_MARKER_DISTANCE):
+                if (
+                    not current_markers
+                    or clipping_pos - current_markers[-1]
+                    > AudioConstants.MIN_CLIPPING_MARKER_DISTANCE
+                ):
                     current_markers.append(clipping_pos)
                     self.clipping_visualizer.set_clipping_positions(current_markers)
 
@@ -176,18 +185,24 @@ class RecordingHandler:
             # Shift unprocessed data to the beginning
             remaining = self.buffer_position - frame_start
             if remaining > 0:
-                self.audio_buffer[:remaining] = self.audio_buffer[frame_start:self.buffer_position]
+                self.audio_buffer[:remaining] = self.audio_buffer[
+                    frame_start : self.buffer_position
+                ]
             self.buffer_position = remaining
 
         # Update current time
-        self.current_time = (self.frame_count * AudioConstants.HOP_LENGTH) / self.sample_rate
+        self.current_time = (
+            self.frame_count * AudioConstants.HOP_LENGTH
+        ) / self.sample_rate
 
         # Throttle UI updates
         self.update_counter += 1
         target_ui_fps = 1000.0 / UIConstants.ANIMATION_UPDATE_MS
         ui_update_interval = max(1, int(self.frames_per_second / target_ui_fps))
 
-        should_update = frames_processed and (self.update_counter % ui_update_interval == 0)
+        should_update = frames_processed and (
+            self.update_counter % ui_update_interval == 0
+        )
         return should_update
 
     def clear(self) -> None:

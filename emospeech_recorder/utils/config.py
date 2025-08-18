@@ -30,15 +30,15 @@ class AudioConfig:
         output_device: Output device name or None for default
         sync_response_time_ms: Audio sync response time in milliseconds
     """
+
     sample_rate: int = AudioConstants.DEFAULT_SAMPLE_RATE
     channels: int = AudioConstants.DEFAULT_CHANNELS
     bit_depth: int = AudioConstants.DEFAULT_BIT_DEPTH
-    dtype: str = 'int16'
+    dtype: str = "int16"
     subtype: str = FileConstants.PCM_16_SUBTYPE
     input_device: Optional[str] = None
     output_device: Optional[str] = None
     sync_response_time_ms: float = 10.0  # Default 10ms response time
-
 
     def __post_init__(self):
         """Set dtype and subtype based on bit depth.
@@ -47,13 +47,21 @@ class AudioConfig:
         based on the selected bit depth.
         """
         if self.bit_depth == 24:
-            self.dtype = 'int32'
+            self.dtype = "int32"
             # For FLAC, subtype is None - format is determined by file extension
-            self.subtype = None if FileConstants.AUDIO_FILE_EXTENSION == '.flac' else FileConstants.PCM_24_SUBTYPE
+            self.subtype = (
+                None
+                if FileConstants.AUDIO_FILE_EXTENSION == ".flac"
+                else FileConstants.PCM_24_SUBTYPE
+            )
         else:
-            self.dtype = 'int16'
+            self.dtype = "int16"
             # For FLAC, subtype is None - format is determined by file extension
-            self.subtype = None if FileConstants.AUDIO_FILE_EXTENSION == '.flac' else FileConstants.PCM_16_SUBTYPE
+            self.subtype = (
+                None
+                if FileConstants.AUDIO_FILE_EXTENSION == ".flac"
+                else FileConstants.PCM_16_SUBTYPE
+            )
 
 
 @dataclass
@@ -69,6 +77,7 @@ class DisplayConfig:
         fmin: Minimum frequency in Hz
         fmax: Maximum frequency in Hz
     """
+
     show_spectrogram: bool = True
     display_seconds: float = UIConstants.SPECTROGRAM_DISPLAY_SECONDS
     n_mels: int = AudioConstants.N_MELS
@@ -104,6 +113,7 @@ class UIConfig:
         monitor: Monitor index for fullscreen (0-based)
         base_font_size: Base font size for text scaling
     """
+
     fullscreen: bool = False
     window_width: Optional[int] = None
     window_height: Optional[int] = None
@@ -134,13 +144,14 @@ class RecorderConfig:
         display: Visualization settings
         ui: User interface settings
     """
+
     # Sub-configurations
     audio: AudioConfig = field(default_factory=AudioConfig)
     display: DisplayConfig = field(default_factory=DisplayConfig)
     ui: UIConfig = field(default_factory=UIConfig)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'RecorderConfig':
+    def from_dict(cls, data: Dict[str, Any]) -> "RecorderConfig":
         """Create configuration from dictionary.
 
         Args:
@@ -150,9 +161,9 @@ class RecorderConfig:
             RecorderConfig: New configuration instance
         """
         return cls(
-            audio=AudioConfig(**data.get('audio', {})),
-            display=DisplayConfig(**data.get('display', {})),
-            ui=UIConfig(**data.get('ui', {}))
+            audio=AudioConfig(**data.get("audio", {})),
+            display=DisplayConfig(**data.get("display", {})),
+            ui=UIConfig(**data.get("ui", {})),
         )
 
     def save(self, path: Path) -> None:
@@ -162,37 +173,37 @@ class RecorderConfig:
             path: Output file path
         """
         data = {
-            'audio': {
-                'sample_rate': self.audio.sample_rate,
-                'channels': self.audio.channels,
-                'bit_depth': self.audio.bit_depth,
-                'dtype': self.audio.dtype,
-                'subtype': self.audio.subtype,
-                'input_device': self.audio.input_device,
-                'output_device': self.audio.output_device,
-                'sync_response_time_ms': self.audio.sync_response_time_ms
+            "audio": {
+                "sample_rate": self.audio.sample_rate,
+                "channels": self.audio.channels,
+                "bit_depth": self.audio.bit_depth,
+                "dtype": self.audio.dtype,
+                "subtype": self.audio.subtype,
+                "input_device": self.audio.input_device,
+                "output_device": self.audio.output_device,
+                "sync_response_time_ms": self.audio.sync_response_time_ms,
             },
-            'display': {
-                'show_spectrogram': self.display.show_spectrogram,
-                'display_seconds': self.display.display_seconds,
-                'n_mels': self.display.n_mels,
-                'fmin': self.display.fmin,
-                'fmax': self.display.fmax
+            "display": {
+                "show_spectrogram": self.display.show_spectrogram,
+                "display_seconds": self.display.display_seconds,
+                "n_mels": self.display.n_mels,
+                "fmin": self.display.fmin,
+                "fmax": self.display.fmax,
             },
-            'ui': {
-                'fullscreen': self.ui.fullscreen,
-                'window_width': self.ui.window_width,
-                'window_height': self.ui.window_height,
-                'monitor': self.ui.monitor,
-                'base_font_size': self.ui.base_font_size
-            }
+            "ui": {
+                "fullscreen": self.ui.fullscreen,
+                "window_width": self.ui.window_width,
+                "window_height": self.ui.window_height,
+                "monitor": self.ui.monitor,
+                "base_font_size": self.ui.base_font_size,
+            },
         }
 
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(data, f, indent=2)
 
     @classmethod
-    def load(cls, path: Path) -> 'RecorderConfig':
+    def load(cls, path: Path) -> "RecorderConfig":
         """Load configuration from JSON file.
 
         Args:
@@ -205,7 +216,7 @@ class RecorderConfig:
             FileNotFoundError: If config file doesn't exist
             json.JSONDecodeError: If file is not valid JSON
         """
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             data = json.load(f)
 
         return cls.from_dict(data)

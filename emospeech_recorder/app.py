@@ -31,7 +31,6 @@ from .ui.dialogs import NewSessionDialog
 from .utils.device_manager import get_device_manager
 from .audio.recorder import record_process
 from .audio.player import playback_process
-from .audio.audio_buffer import AudioBuffer
 from .audio.buffer_manager import BufferManager
 from .audio.shared_state import SharedState
 from .session import SessionManager, Session, SessionConfig
@@ -335,7 +334,7 @@ class Revoxx:
                     )
 
                     # Get the current process info
-                    objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+                    ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
 
                     # Set process name using low-level approach
                     libc = ctypes.CDLL("/usr/lib/libc.dylib")
@@ -1387,7 +1386,6 @@ class Revoxx:
         # This is a placeholder for level monitoring during playback
         # The actual implementation would need to monitor the shared state
         # or audio output to update the level meter
-        pass
 
     def _new_session(self):
         """Handle new session creation."""

@@ -2,9 +2,6 @@
 
 import tkinter as tk
 from tkinter import ttk
-from pathlib import Path
-from typing import Optional
-from datetime import datetime
 
 from ...session import Session
 

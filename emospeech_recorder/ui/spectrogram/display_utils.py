@@ -5,8 +5,9 @@ from typing import Optional
 from ...constants import AudioConstants
 
 
-def create_empty_spectrogram(n_mels: int, spec_frames: int,
-                            fill_value: float = AudioConstants.DB_MIN) -> np.ndarray:
+def create_empty_spectrogram(
+    n_mels: int, spec_frames: int, fill_value: float = AudioConstants.DB_MIN
+) -> np.ndarray:
     """Create an empty spectrogram array with specified dimensions.
 
     Args:
@@ -20,9 +21,9 @@ def create_empty_spectrogram(n_mels: int, spec_frames: int,
     return np.ones((n_mels, spec_frames)) * fill_value
 
 
-def needs_image_recreation(current_shape: Optional[tuple],
-                          target_n_mels: int,
-                          target_frames: int) -> bool:
+def needs_image_recreation(
+    current_shape: Optional[tuple], target_n_mels: int, target_frames: int
+) -> bool:
     """Check if spectrogram image needs to be recreated.
 
     Args:
@@ -36,8 +37,7 @@ def needs_image_recreation(current_shape: Optional[tuple],
     if current_shape is None:
         return True
 
-    return (current_shape[0] != target_n_mels or
-            current_shape[1] != target_frames)
+    return current_shape[0] != target_n_mels or current_shape[1] != target_frames
 
 
 def calculate_display_extent(spec_frames: int, n_mels: int) -> tuple:

@@ -2,4 +2,4 @@
 
 from .widget import MelSpectrogramWidget
 
-__all__ = ['MelSpectrogramWidget']
+__all__ = ["MelSpectrogramWidget"]

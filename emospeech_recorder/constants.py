@@ -5,6 +5,7 @@ organized into logical groups for audio processing, user interface,
 file handling, and keyboard bindings.
 """
 
+
 class AudioConstants:
     """Audio processing related constants.
 
@@ -12,6 +13,7 @@ class AudioConstants:
     including FFT settings, mel spectrogram parameters, and normalization
     factors for different bit depths.
     """
+
     # Sample rates and channels
     DEFAULT_SAMPLE_RATE = 48000
     DEFAULT_CHANNELS = 1
@@ -29,7 +31,7 @@ class AudioConstants:
 
     # Display ranges
     DB_MIN = -70  # Background noise level
-    DB_MAX = 0    # Maximum possible dB value
+    DB_MAX = 0  # Maximum possible dB value
     DB_REFERENCE = 1e-10  # Reference for dB calculation
 
     # dB conversion factors
@@ -45,7 +47,9 @@ class AudioConstants:
     CLIPPING_THRESHOLD = 0.99  # 99% of maximum value
     AUDIO_CHUNK_SIZE = 1024
     MIN_CLIPPING_MARKER_DISTANCE = 5  # Frames between markers
-    FREQUENCY_NOISE_FLOOR_DB = -50  # dB threshold for max frequency detection (-60 = more sensitive, -40 = less sensitive)
+    FREQUENCY_NOISE_FLOOR_DB = (
+        -50
+    )  # dB threshold for max frequency detection (-60 = more sensitive, -40 = less sensitive)
     # Threshold above dB min to consider a mel bin as having signal energy for max-frequency detection
     MAX_FREQ_ENERGY_THRESHOLD_DB = 20
 
@@ -60,19 +64,20 @@ class UIConstants:
     Defines visual appearance settings, timing parameters, layout ratios,
     and display configuration for the graphical user interface.
     """
+
     # Colors
-    COLOR_BACKGROUND = 'black'
-    COLOR_TEXT_NORMAL = 'green'
-    COLOR_TEXT_RECORDING = 'red'
-    COLOR_TEXT_INACTIVE = 'gray'
-    COLOR_CLIPPING = 'red'
-    COLOR_PLAYBACK_LINE = 'red'
-    COLOR_EDGE_INDICATOR = 'lime'
+    COLOR_BACKGROUND = "black"
+    COLOR_TEXT_NORMAL = "green"
+    COLOR_TEXT_RECORDING = "red"
+    COLOR_TEXT_INACTIVE = "gray"
+    COLOR_CLIPPING = "red"
+    COLOR_PLAYBACK_LINE = "red"
+    COLOR_EDGE_INDICATOR = "lime"
 
     # Clipping display
     CLIPPING_LINE_WIDTH = 3
     CLIPPING_LINE_ALPHA = 0.7
-    CLIPPING_WARNING_SYMBOL = '!'
+    CLIPPING_WARNING_SYMBOL = "!"
     CLIPPING_WARNING_SIZE = 20
     CLIPPING_WARNING_POSITION = (0.02, 0.95)  # Relative position
 
@@ -157,16 +162,17 @@ class FileConstants:
     Defines default file paths, extensions, and audio format
     specifications for file operations.
     """
-    DEFAULT_SCRIPT_FILE = 'utts.data'
-    DEFAULT_RECORDING_DIR = 'recordings'
-    AUDIO_FILE_EXTENSION = '.flac'
-    LEGACY_AUDIO_FILE_EXTENSION = '.wav'
-    NOT_FOUND_AUDIO = 'not_found.wav'
+
+    DEFAULT_SCRIPT_FILE = "utts.data"
+    DEFAULT_RECORDING_DIR = "recordings"
+    AUDIO_FILE_EXTENSION = ".flac"
+    LEGACY_AUDIO_FILE_EXTENSION = ".wav"
+    NOT_FOUND_AUDIO = "not_found.wav"
 
     # File formats
-    PCM_16_SUBTYPE = 'PCM_16'
-    PCM_24_SUBTYPE = 'PCM_24'
-    FLAC_SUBTYPE = 'FLAC'
+    PCM_16_SUBTYPE = "PCM_16"
+    PCM_24_SUBTYPE = "PCM_24"
+    FLAC_SUBTYPE = "FLAC"
 
 
 class KeyBindings:
@@ -176,23 +182,22 @@ class KeyBindings:
     Most keys use lowercase; special keys use Tkinter notation.
     Platform-specific modifiers are handled at binding time.
     """
-    RECORD = 'space'
-    PLAY = 'p'
-    NAVIGATE_UP = 'Up'
-    NAVIGATE_DOWN = 'Down'
-    BROWSE_TAKES_LEFT = 'Left'
-    BROWSE_TAKES_RIGHT = 'Right'
-    TOGGLE_SPECTROGRAM = ['m', 'M']
-    TOGGLE_LEVEL_METER = ['l', 'L']
-    TOGGLE_MONITORING = 'o'
-    DELETE_RECORDING = 'd'
-    TOGGLE_FULLSCREEN = 'F10'
-    SHOW_HELP = 'h'
-    SHOW_INFO = 'i'
+
+    RECORD = "space"
+    PLAY = "p"
+    NAVIGATE_UP = "Up"
+    NAVIGATE_DOWN = "Down"
+    BROWSE_TAKES_LEFT = "Left"
+    BROWSE_TAKES_RIGHT = "Right"
+    TOGGLE_SPECTROGRAM = ["m", "M"]
+    TOGGLE_LEVEL_METER = ["l", "L"]
+    TOGGLE_MONITORING = "o"
+    DELETE_RECORDING = "d"
+    TOGGLE_FULLSCREEN = "F10"
+    SHOW_HELP = "h"
+    SHOW_INFO = "i"
 
     # Session management - use platform-specific modifier
-    NEW_SESSION = 'n'  # Ctrl/Cmd+N
-    OPEN_SESSION = 'o'  # Ctrl/Cmd+O
-    QUIT = 'q'  # Ctrl/Cmd+Q
-
-
+    NEW_SESSION = "n"  # Ctrl/Cmd+N
+    OPEN_SESSION = "o"  # Ctrl/Cmd+O
+    QUIT = "q"  # Ctrl/Cmd+Q

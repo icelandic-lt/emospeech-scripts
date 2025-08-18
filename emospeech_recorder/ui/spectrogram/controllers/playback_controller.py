@@ -1,7 +1,7 @@
 """Playback controller for spectrogram animation."""
 
 import time
-from typing import Optional, Tuple
+from typing import Tuple
 from ....constants import UIConstants
 
 
@@ -50,7 +50,9 @@ class PlaybackController:
             self.playback_position = actual_elapsed
         return self.playback_position
 
-    def calculate_animation_phase(self, zoom_level: float, spec_frames: int) -> Tuple[float, float, float]:
+    def calculate_animation_phase(
+        self, zoom_level: float, spec_frames: int
+    ) -> Tuple[float, float, float]:
         """Calculate playback animation parameters.
 
         Args:
@@ -64,7 +66,11 @@ class PlaybackController:
             return 0.0, 0.0, UIConstants.SPECTROGRAM_DISPLAY_SECONDS
 
         # Calculate visible window based on recording duration and zoom
-        visible_seconds = self.recording_duration / zoom_level if self.recording_duration > 0 else UIConstants.SPECTROGRAM_DISPLAY_SECONDS / zoom_level
+        visible_seconds = (
+            self.recording_duration / zoom_level
+            if self.recording_duration > 0
+            else UIConstants.SPECTROGRAM_DISPLAY_SECONDS / zoom_level
+        )
 
         # Special case: when zoomed out to show full recording (1x zoom)
         if visible_seconds >= self.playback_duration:
@@ -90,7 +96,9 @@ class PlaybackController:
             else:
                 # Phase 3: Line moves from center to right
                 view_offset = self.playback_duration - visible_seconds
-                time_in_phase3 = self.playback_position - (self.playback_duration - half_visible)
+                time_in_phase3 = self.playback_position - (
+                    self.playback_duration - half_visible
+                )
                 x_pos_ratio = 0.5 + (time_in_phase3 / half_visible) * 0.5
                 x_pos = x_pos_ratio * (spec_frames - 1)
 

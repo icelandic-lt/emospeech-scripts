@@ -23,9 +23,13 @@ from ..utils.audio_utils import calculate_blocksize
 class AudioRecorder:
     """Audio recorder with struct-based synchronized position updates."""
 
-    def __init__(self, config: AudioConfig, shared_state_name: str,
-                 audio_queue: Optional[mp.Queue] = None,
-                 manager_dict: Optional[dict] = None):
+    def __init__(
+        self,
+        config: AudioConfig,
+        shared_state_name: str,
+        audio_queue: Optional[mp.Queue] = None,
+        manager_dict: Optional[dict] = None,
+    ):
         """Initialize synchronized audio recorder.
 
         Args:
@@ -53,8 +57,7 @@ class AudioRecorder:
 
         # Calculate blocksize from response time setting
         self.blocksize = calculate_blocksize(
-            config.sync_response_time_ms,
-            config.sample_rate
+            config.sync_response_time_ms, config.sample_rate
         )
 
     def set_input_device(self, index: Optional[int]) -> None:
@@ -69,7 +72,7 @@ class AudioRecorder:
         """
         # First check recording state
         recording_state = self.shared_state.get_recording_state()
-        if recording_state.get('status', 0) == SHARED_STATUS_INVALID:
+        if recording_state.get("status", 0) == SHARED_STATUS_INVALID:
             print("ERROR: Recording state not initialized", file=sys.stderr)
             return False
 
@@ -77,12 +80,15 @@ class AudioRecorder:
         settings = self.shared_state.get_audio_settings()
 
         # Check if settings are correctly initialized
-        if settings.get('status', 0) == SHARED_STATUS_INVALID:
-            print("ERROR: Audio settings not initialized (invalid status)", file=sys.stderr)
+        if settings.get("status", 0) == SHARED_STATUS_INVALID:
+            print(
+                "ERROR: Audio settings not initialized (invalid status)",
+                file=sys.stderr,
+            )
             print(f"ERROR: Settings: {settings}", file=sys.stderr)
             return False
 
-        sample_rate = settings['sample_rate']
+        sample_rate = settings["sample_rate"]
 
         # Update config if settings changed
         if sample_rate != self.config.sample_rate:
@@ -91,8 +97,7 @@ class AudioRecorder:
             self.level_calculator.update_sample_rate(sample_rate)
             # Recalculate blocksize
             self.blocksize = calculate_blocksize(
-                self.config.sync_response_time_ms,
-                sample_rate
+                self.config.sync_response_time_ms, sample_rate
             )
 
         # Reset state
@@ -105,12 +110,20 @@ class AudioRecorder:
 
         # Create input stream with callback
         # Support optional input mapping by opening enough channels and selecting in callback
-        input_mapping = getattr(self, '_input_channel_mapping', None)
+        input_mapping = getattr(self, "_input_channel_mapping", None)
         # Determine available input channels on current device (best-effort)
         max_in_ch = None
         try:
-            dev_info = sd.query_devices(self.config.input_device) if self.config.input_device is not None else sd.query_devices(None)
-            max_in_ch = int(dev_info.get('max_input_channels', 0)) if isinstance(dev_info, dict) else None
+            dev_info = (
+                sd.query_devices(self.config.input_device)
+                if self.config.input_device is not None
+                else sd.query_devices(None)
+            )
+            max_in_ch = (
+                int(dev_info.get("max_input_channels", 0))
+                if isinstance(dev_info, dict)
+                else None
+            )
         except (sd.PortAudioError, ValueError, TypeError, AttributeError):
             pass
 
@@ -126,9 +139,17 @@ class AudioRecorder:
                 open_channels = self.config.channels
             else:
                 self._input_channel_pick = filtered
-                open_channels = min(len(filtered), max_in_ch) if max_in_ch is not None else len(filtered)
+                open_channels = (
+                    min(len(filtered), max_in_ch)
+                    if max_in_ch is not None
+                    else len(filtered)
+                )
         else:
-            open_channels = min(self.config.channels, max_in_ch) if (max_in_ch is not None and max_in_ch > 0) else self.config.channels
+            open_channels = (
+                min(self.config.channels, max_in_ch)
+                if (max_in_ch is not None and max_in_ch > 0)
+                else self.config.channels
+            )
             self._input_channel_pick = None
 
         # Create input stream with fallback to default device if needed
@@ -147,7 +168,7 @@ class AudioRecorder:
                 self.stream = sd.InputStream(
                     samplerate=sample_rate,
                     blocksize=self.blocksize,
-                    device=None, # i.e. System-Default
+                    device=None,  # i.e. System-Default
                     channels=open_channels,
                     dtype=self.config.dtype,
                     callback=self._audio_callback,
@@ -158,7 +179,7 @@ class AudioRecorder:
                 # Signal to main process
                 if self.manager_dict is not None:
                     try:
-                        self.manager_dict['last_input_error'] = str(e)
+                        self.manager_dict["last_input_error"] = str(e)
                     except (KeyError, TypeError):
                         pass
                 return False
@@ -175,7 +196,7 @@ class AudioRecorder:
         Returns:
             Processed audio data with appropriate channel selection/mixing
         """
-        if not hasattr(self, '_input_channel_pick') or not self._input_channel_pick:
+        if not hasattr(self, "_input_channel_pick") or not self._input_channel_pick:
             return indata.copy()
 
         # Guard indices vs delivered channel count
@@ -185,7 +206,7 @@ class AudioRecorder:
         if len(safe_indices) == 0:
             # Fallback to first available channels matching config.channels
             if indata.ndim == 2 and available >= self.config.channels:
-                picked = indata[:, :self.config.channels]
+                picked = indata[:, : self.config.channels]
             else:
                 picked = indata
         else:
@@ -224,29 +245,35 @@ class AudioRecorder:
         settings = self.shared_state.get_audio_settings()
 
         # Check if settings are correctly initialized
-        if settings.get('status', 0) == SHARED_STATUS_INVALID:
-            print("ERROR: Audio settings not initialized in save_recording (invalid status)", file=sys.stderr)
+        if settings.get("status", 0) == SHARED_STATUS_INVALID:
+            print(
+                "ERROR: Audio settings not initialized in save_recording (invalid status)",
+                file=sys.stderr,
+            )
             return
 
-        sample_rate = settings['sample_rate']
-        bit_depth = settings['bit_depth']
+        sample_rate = settings["sample_rate"]
+        bit_depth = settings["bit_depth"]
 
         # Determine subtype based on format and bit depth
-        if filepath.suffix.lower() == '.flac':
+        if filepath.suffix.lower() == ".flac":
             # For FLAC, explicitly set subtype based on bit depth
             if bit_depth == 24:
-                sf.write(str(filepath), audio_data, sample_rate, subtype='PCM_24')
+                sf.write(str(filepath), audio_data, sample_rate, subtype="PCM_24")
             else:
-                sf.write(str(filepath), audio_data, sample_rate, subtype='PCM_16')
+                sf.write(str(filepath), audio_data, sample_rate, subtype="PCM_16")
         elif self.config.subtype:
             # For WAV files, use configured subtype
-            sf.write(str(filepath), audio_data, sample_rate, subtype=self.config.subtype)
+            sf.write(
+                str(filepath), audio_data, sample_rate, subtype=self.config.subtype
+            )
         else:
             # Default behavior
             sf.write(str(filepath), audio_data, sample_rate)
 
-    def _audio_callback(self, indata: np.ndarray, frames: int,
-                       time_info, status) -> None:
+    def _audio_callback(
+        self, indata: np.ndarray, frames: int, time_info, status
+    ) -> None:
         """Audio stream callback with hardware timing.
 
         Args:
@@ -271,8 +298,7 @@ class AudioRecorder:
 
             # Update shared state with hardware timing
             self.shared_state.update_recording_position(
-                self.current_position,
-                time_info.inputBufferAdcTime
+                self.current_position, time_info.inputBufferAdcTime
             )
 
             # Calculate and update level meter
@@ -283,7 +309,7 @@ class AudioRecorder:
                 rms_db=rms_db,
                 peak_db=peak_db,
                 peak_hold_db=peak_hold_db,
-                frame_count=self.level_calculator.get_frame_count()
+                frame_count=self.level_calculator.get_frame_count(),
             )
 
             # Send to visualization queue if active
@@ -306,12 +332,14 @@ class AudioRecorder:
             self.shared_state.close()
 
 
-def record_process(config: AudioConfig,
-                   audio_queue: mp.Queue,
-                   shared_state_name: str,
-                   control_queue: mp.Queue,
-                   manager_dict: dict,
-                   shutdown_event: mp.Event) -> None:
+def record_process(
+    config: AudioConfig,
+    audio_queue: mp.Queue,
+    shared_state_name: str,
+    control_queue: mp.Queue,
+    manager_dict: dict,
+    shutdown_event: mp.Event,
+) -> None:
     """Process function for audio recording with hardware synchronization.
 
     Args:
@@ -337,36 +365,36 @@ def record_process(config: AudioConfig,
                     print(f"Warning: Received non-dictionary command: {command}")
                     continue
 
-                action = command.get('action')
+                action = command.get("action")
 
-                if action == 'start':
+                if action == "start":
                     recorder.start_recording()
 
-                elif action == 'stop':
+                elif action == "stop":
                     audio_data = recorder.stop_recording()
 
                     # Get save path from old shared state (for compatibility)
-                    save_path = manager_dict.get('save_path')
+                    save_path = manager_dict.get("save_path")
                     if save_path and len(audio_data) > 0:
                         recorder.save_recording(audio_data, Path(save_path))
 
                     # Clear save path
-                    manager_dict['save_path'] = None
+                    manager_dict["save_path"] = None
 
-                elif action == 'quit':
+                elif action == "quit":
                     break
 
-                elif action == 'set_input_device':
+                elif action == "set_input_device":
                     # Update device index for future recordings
-                    value = command.get('index', None)
+                    value = command.get("index", None)
                     if isinstance(value, int):
                         recorder.set_input_device(value)
                     elif value is None:
                         recorder.set_input_device(None)
 
-                elif action == 'set_input_channel_mapping':
+                elif action == "set_input_channel_mapping":
                     # Update mapping for future recordings
-                    mapping = command.get('mapping', None)
+                    mapping = command.get("mapping", None)
                     # Store on the recorder instance for future use
                     try:
                         if isinstance(mapping, list):

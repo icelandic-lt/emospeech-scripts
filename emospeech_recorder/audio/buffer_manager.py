@@ -8,7 +8,7 @@ having multiple valid buffers makes smoother transitions possible.
 """
 
 import threading
-from typing import Optional, List
+from typing import Optional
 from collections import deque
 import time
 

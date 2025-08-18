@@ -12,6 +12,7 @@ class RecordingDisplayState:
     Used when displaying saved recordings that may have different
     parameters than the current recording settings.
     """
+
     mel_processor: Optional[MelSpectrogramProcessor] = None
     n_mels: Optional[int] = None
     spec_frames: Optional[int] = None

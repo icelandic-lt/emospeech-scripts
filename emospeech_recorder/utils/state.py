@@ -1,8 +1,7 @@
 """State management for Revoxx."""
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, List, Tuple
-from pathlib import Path
+from typing import Dict, Optional, List
 import threading
 
 
@@ -23,6 +22,7 @@ class RecordingState:
         labels: List of utterance labels from script
         utterances: List of utterance texts from script
     """
+
     # Current state
     current_index: int = 0
     is_recording: bool = False
@@ -126,6 +126,7 @@ class AudioState:
         stop_playback_signal: Signal to stop playback
         audio_queue_active: Whether audio queue processing is active
     """
+
     # Audio device indices
     input_device_index: Optional[int] = None
     output_device_index: Optional[int] = None
@@ -156,6 +157,7 @@ class UIState:
         font_size_small: Small font size for status
         saved_window_geometry: Saved window geometry before fullscreen
     """
+
     # Window state
     window_width: int = 0
     window_height: int = 0
@@ -183,16 +185,15 @@ class UIState:
         from ..constants import UIConstants
 
         self.font_size_large = max(
-            int(base_size * scale_factor),
-            UIConstants.MIN_FONT_SIZE_LARGE
+            int(base_size * scale_factor), UIConstants.MIN_FONT_SIZE_LARGE
         )
         self.font_size_medium = max(
             int(self.font_size_large * UIConstants.FONT_SCALE_MEDIUM),
-            UIConstants.MIN_FONT_SIZE_MEDIUM
+            UIConstants.MIN_FONT_SIZE_MEDIUM,
         )
         self.font_size_small = max(
             int(self.font_size_large * UIConstants.FONT_SCALE_SMALL),
-            UIConstants.MIN_FONT_SIZE_SMALL
+            UIConstants.MIN_FONT_SIZE_SMALL,
         )
 
 
@@ -208,6 +209,7 @@ class AppState:
         audio: Audio processing state
         ui: User interface state
     """
+
     recording: RecordingState = field(default_factory=RecordingState)
     audio: AudioState = field(default_factory=AudioState)
     ui: UIState = field(default_factory=UIState)

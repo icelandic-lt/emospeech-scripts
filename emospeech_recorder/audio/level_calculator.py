@@ -16,8 +16,9 @@ class LevelCalculator:
     DEFAULT_RMS_WINDOW_MS = 300.0  # Default RMS calculation window in milliseconds
     DEFAULT_PEAK_HOLD_MS = 3000.0  # Default peak hold duration in milliseconds
 
-    def __init__(self, sample_rate: int, rms_window_ms: float = None,
-                 peak_hold_ms: float = None):
+    def __init__(
+        self, sample_rate: int, rms_window_ms: float = None, peak_hold_ms: float = None
+    ):
         """Initialize level calculator.
 
         Args:
@@ -30,14 +31,18 @@ class LevelCalculator:
         self.peak_hold_ms = peak_hold_ms or self.DEFAULT_PEAK_HOLD_MS
 
         # RMS calculation state
-        self.rms_window_samples = int(self.rms_window_ms * sample_rate / AudioConstants.MS_TO_SEC)
+        self.rms_window_samples = int(
+            self.rms_window_ms * sample_rate / AudioConstants.MS_TO_SEC
+        )
         self.audio_buffer = np.zeros(self.rms_window_samples)
         self.buffer_index = 0
 
         # Peak hold state
         self.peak_hold_db = AudioConstants.MIN_DB_LEVEL
         self.peak_hold_counter = 0
-        self.peak_hold_samples = int(self.peak_hold_ms * sample_rate / AudioConstants.MS_TO_SEC)
+        self.peak_hold_samples = int(
+            self.peak_hold_ms * sample_rate / AudioConstants.MS_TO_SEC
+        )
 
         # Frame counter
         self.frame_count = 0
@@ -51,7 +56,9 @@ class LevelCalculator:
         if sample_rate != self.sample_rate:
             self.sample_rate = sample_rate
             # Recalculate window sizes
-            new_rms_samples = int(self.rms_window_ms * sample_rate / AudioConstants.MS_TO_SEC)
+            new_rms_samples = int(
+                self.rms_window_ms * sample_rate / AudioConstants.MS_TO_SEC
+            )
 
             # Resize RMS buffer if needed
             if new_rms_samples != self.rms_window_samples:
@@ -65,9 +72,13 @@ class LevelCalculator:
                 self.buffer_index = min(self.buffer_index, new_rms_samples - 1)
 
             # Update peak hold samples
-            self.peak_hold_samples = int(self.peak_hold_ms * sample_rate / AudioConstants.MS_TO_SEC)
+            self.peak_hold_samples = int(
+                self.peak_hold_ms * sample_rate / AudioConstants.MS_TO_SEC
+            )
 
-    def process(self, audio_data: np.ndarray, channels: int = 1) -> Tuple[float, float, float]:
+    def process(
+        self, audio_data: np.ndarray, channels: int = 1
+    ) -> Tuple[float, float, float]:
         """Process audio data and return level measurements.
 
         Args:
@@ -96,27 +107,33 @@ class LevelCalculator:
         samples_to_add = len(mono_data)
         if samples_to_add >= self.rms_window_samples:
             # Replace entire buffer
-            self.audio_buffer = mono_data[-self.rms_window_samples:]
+            self.audio_buffer = mono_data[-self.rms_window_samples :]
             self.buffer_index = 0
         else:
             # Add to circular buffer
             end_index = self.buffer_index + samples_to_add
             if end_index <= self.rms_window_samples:
-                self.audio_buffer[self.buffer_index:end_index] = mono_data
+                self.audio_buffer[self.buffer_index : end_index] = mono_data
             else:
                 # Wrap around
                 first_part = self.rms_window_samples - self.buffer_index
-                self.audio_buffer[self.buffer_index:] = mono_data[:first_part]
-                self.audio_buffer[:end_index - self.rms_window_samples] = mono_data[first_part:]
+                self.audio_buffer[self.buffer_index :] = mono_data[:first_part]
+                self.audio_buffer[: end_index - self.rms_window_samples] = mono_data[
+                    first_part:
+                ]
             self.buffer_index = end_index % self.rms_window_samples
 
         # Calculate RMS
-        rms = np.sqrt(np.mean(self.audio_buffer ** 2))
-        rms_db = AudioConstants.AMPLITUDE_TO_DB_FACTOR * np.log10(max(rms, AudioConstants.NOISE_FLOOR))
+        rms = np.sqrt(np.mean(self.audio_buffer**2))
+        rms_db = AudioConstants.AMPLITUDE_TO_DB_FACTOR * np.log10(
+            max(rms, AudioConstants.NOISE_FLOOR)
+        )
 
         # Calculate peak
         peak = np.max(np.abs(mono_data))
-        peak_db = AudioConstants.AMPLITUDE_TO_DB_FACTOR * np.log10(max(peak, AudioConstants.NOISE_FLOOR))
+        peak_db = AudioConstants.AMPLITUDE_TO_DB_FACTOR * np.log10(
+            max(peak, AudioConstants.NOISE_FLOOR)
+        )
 
         # Update peak hold
         if peak_db > self.peak_hold_db:

@@ -30,7 +30,7 @@ class AppIcon:
             # macOS can handle large icons and will scale them as needed
             img = tk.PhotoImage(file=str(icon_path))
 
-            if icon_path.parent.name == 'debug':
+            if icon_path.parent.name == "debug":
                 print(f"Loaded icon: {img.width()}x{img.height()} pixels")
 
             return img
@@ -38,4 +38,3 @@ class AppIcon:
         except Exception as e:
             print(f"Error creating icon from PNG: {e}")
             return None
-

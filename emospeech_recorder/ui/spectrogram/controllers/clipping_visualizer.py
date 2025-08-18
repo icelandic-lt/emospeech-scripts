@@ -3,7 +3,6 @@
 from typing import List, Optional
 from matplotlib.axes import Axes
 from matplotlib.text import Text
-from matplotlib.lines import Line2D
 from ....constants import UIConstants
 
 
@@ -35,7 +34,7 @@ class ClippingVisualizer:
     def clear_markers(self) -> None:
         """Remove all clipping marker lines from display."""
         for line in self.ax.lines[:]:
-            if hasattr(line, '_is_clipping_marker') and line._is_clipping_marker:
+            if hasattr(line, "_is_clipping_marker") and line._is_clipping_marker:
                 line.remove()
 
     def add_marker_line(self, x_position: int) -> None:
@@ -48,7 +47,7 @@ class ClippingVisualizer:
             x=x_position,
             color=UIConstants.COLOR_CLIPPING,
             linewidth=UIConstants.CLIPPING_LINE_WIDTH,
-            alpha=UIConstants.CLIPPING_LINE_ALPHA
+            alpha=UIConstants.CLIPPING_LINE_ALPHA,
         )
         line._is_clipping_marker = True
 
@@ -70,7 +69,9 @@ class ClippingVisualizer:
                     self.add_marker_line(display_pos)
         self.show_warning()
 
-    def update_markers_for_zoom(self, start_frame: int, end_frame: int, spec_frames: int) -> None:
+    def update_markers_for_zoom(
+        self, start_frame: int, end_frame: int, spec_frames: int
+    ) -> None:
         """Update clipping markers for zoomed view.
 
         Args:
@@ -90,9 +91,14 @@ class ClippingVisualizer:
                     if 0 <= display_pos < spec_frames:
                         self.add_marker_line(display_pos)
 
-    def update_markers_for_live(self, current_time: float, frame_count: int,
-                               spec_frames: int, frames_per_second: float,
-                               zoom_level: float) -> None:
+    def update_markers_for_live(
+        self,
+        current_time: float,
+        frame_count: int,
+        spec_frames: int,
+        frames_per_second: float,
+        zoom_level: float,
+    ) -> None:
         """Update clipping markers for live recording.
 
         Args:
@@ -131,9 +137,9 @@ class ClippingVisualizer:
                 transform=self.ax.transAxes,
                 color=UIConstants.COLOR_CLIPPING,
                 fontsize=UIConstants.CLIPPING_WARNING_SIZE,
-                fontweight='bold',
-                ha='left',
-                va='top'
+                fontweight="bold",
+                ha="left",
+                va="top",
             )
         elif not self.clipping_markers and self.clipping_warning:
             self.clipping_warning.remove()

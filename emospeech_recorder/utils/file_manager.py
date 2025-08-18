@@ -5,7 +5,7 @@ from typing import Optional, Tuple, List
 import soundfile as sf
 import numpy as np
 
-from ..constants import FileConstants, AudioConstants
+from ..constants import FileConstants
 
 
 class RecordingFileManager:
@@ -78,8 +78,9 @@ class RecordingFileManager:
         flac_filename = f"take_{take_str}{FileConstants.AUDIO_FILE_EXTENSION}"
         wav_filename = f"take_{take_str}{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}"
 
-        return ((utterance_dir / flac_filename).exists() or
-                (utterance_dir / wav_filename).exists())
+        return (utterance_dir / flac_filename).exists() or (
+            utterance_dir / wav_filename
+        ).exists()
 
     def find_latest_take(self, label: str) -> int:
         """Find the latest take number for a label.
@@ -126,14 +127,16 @@ class RecordingFileManager:
         # Check for both FLAC and WAV files
         flac_pattern = f"take_*{FileConstants.AUDIO_FILE_EXTENSION}"
         wav_pattern = f"take_*{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}"
-        files = list(utterance_dir.glob(flac_pattern)) + list(utterance_dir.glob(wav_pattern))
+        files = list(utterance_dir.glob(flac_pattern)) + list(
+            utterance_dir.glob(wav_pattern)
+        )
 
         highest = 0
         for file in files:
             # Extract take number from filename
             try:
                 # Filename format: take_XXX.wav
-                take_str = file.stem.split('_')[1]
+                take_str = file.stem.split("_")[1]
                 take = int(take_str)
                 highest = max(highest, take)
             except (ValueError, IndexError):
@@ -159,7 +162,9 @@ class RecordingFileManager:
             takes[label] = self.get_highest_take(label)
         return takes
 
-    def get_file_info(self, file_path: Path) -> Optional[Tuple[int, int, str, int, float]]:
+    def get_file_info(
+        self, file_path: Path
+    ) -> Optional[Tuple[int, int, str, int, float]]:
         """Get audio file information.
 
         Args:
@@ -173,15 +178,21 @@ class RecordingFileManager:
 
             # Determine bit depth from subtype
             bit_depth = 16  # default
-            if 'PCM_24' in info.subtype or 'FLAC' in info.subtype:
+            if "PCM_24" in info.subtype or "FLAC" in info.subtype:
                 bit_depth = 24
-            elif 'PCM_16' in info.subtype:
+            elif "PCM_16" in info.subtype:
                 bit_depth = 16
 
             # Format
-            format_name = 'FLAC' if info.format == 'FLAC' else 'WAV'
+            format_name = "FLAC" if info.format == "FLAC" else "WAV"
 
-            return (info.samplerate, bit_depth, format_name, info.channels, info.duration)
+            return (
+                info.samplerate,
+                bit_depth,
+                format_name,
+                info.channels,
+                info.duration,
+            )
         except Exception as e:
             print(f"Error reading file info: {e}")
             return None
@@ -216,8 +227,9 @@ class RecordingFileManager:
 
         return data, sample_rate
 
-    def save_audio(self, filepath: Path, data: np.ndarray,
-                   sample_rate: int, subtype: str) -> None:
+    def save_audio(
+        self, filepath: Path, data: np.ndarray, sample_rate: int, subtype: str
+    ) -> None:
         """Save audio data to file.
 
         Args:
@@ -278,13 +290,15 @@ class RecordingFileManager:
         # Check for both FLAC and WAV files
         flac_pattern = f"take_*{FileConstants.AUDIO_FILE_EXTENSION}"
         wav_pattern = f"take_*{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}"
-        files = list(utterance_dir.glob(flac_pattern)) + list(utterance_dir.glob(wav_pattern))
+        files = list(utterance_dir.glob(flac_pattern)) + list(
+            utterance_dir.glob(wav_pattern)
+        )
 
         existing_takes = []
         for file in files:
             try:
                 # Extract take number from filename: take_XXX.wav
-                take_str = file.stem.split('_')[1]
+                take_str = file.stem.split("_")[1]
                 take = int(take_str)
                 existing_takes.append(take)
             except (ValueError, IndexError):
@@ -329,14 +343,14 @@ class ScriptFileManager:
         labels = []
         utterances = []
 
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
-                if not line or line.startswith('#'):
+                if not line or line.startswith("#"):
                     continue
 
                 # Parse Festival format: (label "text")
-                if not line.startswith('(') or not line.endswith(')'):
+                if not line.startswith("(") or not line.endswith(")"):
                     print(f"Warning: Skipping invalid line {line_num}: {line}")
                     continue
 
@@ -382,7 +396,7 @@ class ScriptFileManager:
         if len(labels) != len(utterances):
             raise ValueError("Labels and utterances must have the same length")
 
-        with open(filepath, 'w', encoding='utf-8') as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             for label, text in zip(labels, utterances):
                 f.write(f'({label} "{text}")\n')
 

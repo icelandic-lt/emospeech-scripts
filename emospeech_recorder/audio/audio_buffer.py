@@ -8,6 +8,7 @@ import numpy as np
 from multiprocessing import shared_memory
 from typing import Optional, Tuple
 
+
 class AudioBuffer:
     """Manages shared memory for audio data across processes.
 
@@ -28,7 +29,7 @@ class AudioBuffer:
         self.name: Optional[str] = name
 
     @classmethod
-    def create_from_array(cls, audio_data: np.ndarray) -> 'AudioBuffer':
+    def create_from_array(cls, audio_data: np.ndarray) -> "AudioBuffer":
         """Create a shared buffer from numpy array.
 
         Args:
@@ -49,17 +50,16 @@ class AudioBuffer:
 
         # Copy data to shared memory
         shared_array = np.ndarray(
-            buffer.shape,
-            dtype=buffer.dtype,
-            buffer=buffer.shm.buf
+            buffer.shape, dtype=buffer.dtype, buffer=buffer.shm.buf
         )
         shared_array[:] = audio_data[:]
 
         return buffer
 
     @classmethod
-    def attach_to_existing(cls, name: str, shape: Tuple[int, ...],
-                          dtype: np.dtype) -> 'AudioBuffer':
+    def attach_to_existing(
+        cls, name: str, shape: Tuple[int, ...], dtype: np.dtype
+    ) -> "AudioBuffer":
         """Attach to existing shared memory buffer.
 
         Args:
@@ -88,11 +88,7 @@ class AudioBuffer:
         if self.shm is None:
             raise RuntimeError("Shared memory not initialized")
 
-        return np.ndarray(
-            self.shape,
-            dtype=self.dtype,
-            buffer=self.shm.buf
-        )
+        return np.ndarray(self.shape, dtype=self.dtype, buffer=self.shm.buf)
 
     def close(self) -> None:
         """Close the shared memory connection."""
@@ -118,7 +114,7 @@ class AudioBuffer:
             Dictionary with name, shape, and dtype info
         """
         return {
-            'name': self.name,
-            'shape': self.shape,
-            'dtype': str(self.dtype) if self.dtype else None
+            "name": self.name,
+            "shape": self.shape,
+            "dtype": str(self.dtype) if self.dtype else None,
         }

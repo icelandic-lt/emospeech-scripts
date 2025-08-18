@@ -10,6 +10,7 @@ class MelConstants:
 
     These values define the adaptive scaling behavior for different sample rates.
     """
+
     # Base parameters (for 48kHz reference)
     BASE_SAMPLE_RATE: int = 48000
     BASE_FMIN: int = 50
@@ -60,20 +61,24 @@ class MelConstants:
         # Calculate scale factor and adjust n_mels more conservatively for high rates
         if sample_rate <= 48000:
             scale_factor = freq_range / cls.BASE_FREQ_RANGE
-            n_mels = max(cls.MIN_N_MELS, min(cls.MAX_N_MELS, int(cls.BASE_N_MELS * scale_factor)))
+            n_mels = max(
+                cls.MIN_N_MELS, min(cls.MAX_N_MELS, int(cls.BASE_N_MELS * scale_factor))
+            )
         else:
             # For high sample rates, use logarithmic scaling to prevent too many mel bins
             # This ensures mel filters have enough frequency coverage
             scale_factor = np.log2(sample_rate / cls.BASE_SAMPLE_RATE)
             # Keep n_mels moderate to ensure each filter has enough frequency range
-            n_mels = min(int(cls.BASE_N_MELS * (1 + scale_factor * 0.25)), cls.MAX_N_MELS)
+            n_mels = min(
+                int(cls.BASE_N_MELS * (1 + scale_factor * 0.25)), cls.MAX_N_MELS
+            )
 
         return {
-            'nyquist': nyquist,
-            'fmax': fmax,
-            'freq_range': freq_range,
-            'scale_factor': scale_factor,
-            'n_mels': n_mels
+            "nyquist": nyquist,
+            "fmax": fmax,
+            "freq_range": freq_range,
+            "scale_factor": scale_factor,
+            "n_mels": n_mels,
         }
 
 

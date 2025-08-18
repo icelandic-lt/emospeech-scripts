@@ -12,13 +12,18 @@ class UserSettings:
 
     These settings override default configuration values.
     """
+
     # Audio settings
     sample_rate: int = 48000
     bit_depth: int = 24
     input_device: Optional[str] = None
     output_device: Optional[str] = None
-    input_channel_mapping: Optional[list] = None  # list of ints (0-based) or None for default
-    output_channel_mapping: Optional[list] = None  # list of ints (0-based) or None for default
+    input_channel_mapping: Optional[list] = (
+        None  # list of ints (0-based) or None for default
+    )
+    output_channel_mapping: Optional[list] = (
+        None  # list of ints (0-based) or None for default
+    )
     audio_sync_response_time_ms: float = 10.0
 
     # Display settings
@@ -42,7 +47,7 @@ class UserSettings:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'UserSettings':
+    def from_dict(cls, data: Dict[str, Any]) -> "UserSettings":
         """Create settings from dictionary."""
         # Filter out unknown keys
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
@@ -58,7 +63,7 @@ class SettingsManager:
 
     def __init__(self):
         """Initialize settings manager."""
-        self.settings_file = Path.home() / '.emospeech_settings'
+        self.settings_file = Path.home() / ".emospeech_settings"
         self.settings = self.load_settings()
 
     def load_settings(self) -> UserSettings:
@@ -69,7 +74,7 @@ class SettingsManager:
         """
         if self.settings_file.exists():
             try:
-                with open(self.settings_file, 'r') as f:
+                with open(self.settings_file, "r") as f:
                     data = json.load(f)
                 return UserSettings.from_dict(data)
             except (json.JSONDecodeError, KeyError) as e:
@@ -81,7 +86,7 @@ class SettingsManager:
     def save_settings(self) -> None:
         """Save current settings to file."""
         try:
-            with open(self.settings_file, 'w') as f:
+            with open(self.settings_file, "w") as f:
                 json.dump(self.settings.to_dict(), f, indent=2)
         except Exception as e:
             print(f"Error saving settings: {e}")

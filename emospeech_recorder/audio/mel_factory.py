@@ -10,7 +10,9 @@ class MelProcessorFactory:
     """Factory for creating mel spectrogram processors with adaptive parameters."""
 
     @staticmethod
-    def create_for_sample_rate(sample_rate: int, fmin: float = AudioConstants.FMIN) -> Tuple[MelSpectrogramProcessor, int]:
+    def create_for_sample_rate(
+        sample_rate: int, fmin: float = AudioConstants.FMIN
+    ) -> Tuple[MelSpectrogramProcessor, int]:
         """Create mel processor adapted to specific sample rate.
 
         Args:
@@ -26,15 +28,17 @@ class MelProcessorFactory:
         # Create processor
         processor = MelSpectrogramProcessor(
             sample_rate=sample_rate,
-            n_mels=params['n_mels'],
+            n_mels=params["n_mels"],
             fmin=fmin,
-            fmax=params['fmax']
+            fmax=params["fmax"],
         )
 
-        return processor, params['n_mels']
+        return processor, params["n_mels"]
 
     @staticmethod
-    def calculate_adaptive_params(sample_rate: int, fmin: float = AudioConstants.FMIN) -> dict:
+    def calculate_adaptive_params(
+        sample_rate: int, fmin: float = AudioConstants.FMIN
+    ) -> dict:
         """Calculate adaptive parameters without creating processor.
 
         This method now delegates to the centralized calculation.

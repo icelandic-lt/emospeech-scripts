@@ -22,14 +22,14 @@ class InfoOverlay:
         # Create overlay frame
         self.frame = tk.Frame(
             parent,
-            bg='black',
+            bg="black",
             highlightthickness=2,
-            highlightbackground='green',
-            highlightcolor='green',
-            relief='solid',
-            borderwidth=1
+            highlightbackground="green",
+            highlightcolor="green",
+            relief="solid",
+            borderwidth=1,
         )
-        self.frame.configure(background='black')
+        self.frame.configure(background="black")
 
         # Create content labels
         self._create_labels()
@@ -37,66 +37,70 @@ class InfoOverlay:
     def _create_labels(self) -> None:
         """Create labels for displaying information."""
         # Info section
-        self.info_frame = tk.Frame(self.frame, bg='black')
+        self.info_frame = tk.Frame(self.frame, bg="black")
         self.info_frame.pack(pady=20, padx=25)
 
         # Sample rate
         self.sample_rate_label = tk.Label(
             self.info_frame,
             text="",
-            fg='green',
-            bg='black',
-            font=('Helvetica', 14),
-            anchor='w'
+            fg="green",
+            bg="black",
+            font=("Helvetica", 14),
+            anchor="w",
         )
-        self.sample_rate_label.pack(anchor='w', fill='x', pady=2)
+        self.sample_rate_label.pack(anchor="w", fill="x", pady=2)
 
         # Bit depth
         self.bit_depth_label = tk.Label(
             self.info_frame,
             text="",
-            fg='green',
-            bg='black',
-            font=('Helvetica', 14),
-            anchor='w'
+            fg="green",
+            bg="black",
+            font=("Helvetica", 14),
+            anchor="w",
         )
-        self.bit_depth_label.pack(anchor='w', fill='x', pady=2)
+        self.bit_depth_label.pack(anchor="w", fill="x", pady=2)
 
         # Format/Channels
         self.format_label = tk.Label(
             self.info_frame,
             text="",
-            fg='green',
-            bg='black',
-            font=('Helvetica', 14),
-            anchor='w'
+            fg="green",
+            bg="black",
+            font=("Helvetica", 14),
+            anchor="w",
         )
-        self.format_label.pack(anchor='w', fill='x', pady=2)
+        self.format_label.pack(anchor="w", fill="x", pady=2)
 
         # Duration
         self.duration_label = tk.Label(
             self.info_frame,
             text="",
-            fg='green',
-            bg='black',
-            font=('Helvetica', 14),
-            anchor='w'
+            fg="green",
+            bg="black",
+            font=("Helvetica", 14),
+            anchor="w",
         )
-        self.duration_label.pack(anchor='w', fill='x', pady=2)
+        self.duration_label.pack(anchor="w", fill="x", pady=2)
 
         # File size
         self.size_label = tk.Label(
             self.info_frame,
             text="",
-            fg='green',
-            bg='black',
-            font=('Helvetica', 14),
-            anchor='w'
+            fg="green",
+            bg="black",
+            font=("Helvetica", 14),
+            anchor="w",
         )
-        self.size_label.pack(anchor='w', fill='x', pady=2)
+        self.size_label.pack(anchor="w", fill="x", pady=2)
 
-
-    def show(self, recording_params: dict, is_recording: bool = False, is_monitoring: bool = False) -> None:
+    def show(
+        self,
+        recording_params: dict,
+        is_recording: bool = False,
+        is_monitoring: bool = False,
+    ) -> None:
         """Show the overlay with recording information.
 
         Args:
@@ -106,9 +110,11 @@ class InfoOverlay:
             is_monitoring: Whether currently monitoring (takes precedence over is_recording)
         """
         # Show actual recording parameters
-        self.sample_rate_label.config(text=f"{recording_params.get('sample_rate', 48000)} Hz")
+        self.sample_rate_label.config(
+            text=f"{recording_params.get('sample_rate', 48000)} Hz"
+        )
         self.bit_depth_label.config(text=f"{recording_params.get('bit_depth', 24)} bit")
-        channels = recording_params.get('channels', 1)
+        channels = recording_params.get("channels", 1)
         channel_text = "Mono" if channels == 1 else "Stereo"
 
         if is_monitoring:
@@ -123,9 +129,9 @@ class InfoOverlay:
             self.size_label.config(text="")
         else:
             # Show file info or ready state
-            format_name = recording_params.get('format', 'FLAC')
-            duration = recording_params.get('duration', 0)
-            size_bytes = recording_params.get('size', 0)
+            format_name = recording_params.get("format", "FLAC")
+            duration = recording_params.get("duration", 0)
+            size_bytes = recording_params.get("size", 0)
 
             if duration > 0:
                 # We have a recording
@@ -134,7 +140,9 @@ class InfoOverlay:
                 # Duration
                 minutes = int(duration // 60)
                 seconds = duration % 60
-                duration_text = f"{minutes}:{seconds:05.2f}" if minutes > 0 else f"{seconds:.2f}s"
+                duration_text = (
+                    f"{minutes}:{seconds:05.2f}" if minutes > 0 else f"{seconds:.2f}s"
+                )
                 self.duration_label.config(text=duration_text)
 
                 # File size
@@ -152,7 +160,7 @@ class InfoOverlay:
                 self.size_label.config(text="")
 
         # Show the frame with relative positioning
-        self.frame.place(relx=0.98, rely=0.12, anchor='ne')
+        self.frame.place(relx=0.98, rely=0.12, anchor="ne")
         self.visible = True
 
         # Force update to prevent white window
@@ -173,7 +181,7 @@ class InfoOverlay:
             # Content will be set by the caller
             self.visible = True
             # Place the frame to make it visible
-            self.frame.place(relx=0.98, rely=0.12, anchor='ne')
+            self.frame.place(relx=0.98, rely=0.12, anchor="ne")
 
     def _position_overlay(self) -> None:
         """Position the overlay in the top-right corner."""
@@ -184,4 +192,4 @@ class InfoOverlay:
         """Update the overlay position when window is resized."""
         if self.visible:
             # Re-apply the relative positioning
-            self.frame.place(relx=0.98, rely=0.12, anchor='ne')
+            self.frame.place(relx=0.98, rely=0.12, anchor="ne")

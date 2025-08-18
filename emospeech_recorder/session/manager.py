@@ -42,7 +42,7 @@ class SessionManager:
         emotion: str,
         audio_config: SessionConfig,
         script_source: Path,
-        custom_dir_name: Optional[str] = None
+        custom_dir_name: Optional[str] = None,
     ) -> Session:
         """Create a new session.
 
@@ -101,7 +101,7 @@ class SessionManager:
             id=f"speaker_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             name=speaker_name,
             gender=gender,
-            emotion=emotion
+            emotion=emotion,
         )
 
         session = Session(
@@ -110,7 +110,7 @@ class SessionManager:
             audio_config=audio_config,
             created_at=datetime.now(),
             modified_at=datetime.now(),
-            session_dir=session_dir
+            session_dir=session_dir,
         )
 
         # Save session
@@ -145,12 +145,16 @@ class SessionManager:
 
         # Check for .revoxx suffix
         if not session_dir.name.endswith(self.SUFFIX):
-            raise ValueError(f"Not a valid session directory (missing {self.SUFFIX}): {session_dir}")
+            raise ValueError(
+                f"Not a valid session directory (missing {self.SUFFIX}): {session_dir}"
+            )
 
         # Check for script file
         script_path = session_dir / self.SCRIPT_FILE
         if not script_path.exists():
-            raise FileNotFoundError(f"Required script file not found in session: {script_path}")
+            raise FileNotFoundError(
+                f"Required script file not found in session: {script_path}"
+            )
 
         session = Session.load(session_dir)
 
@@ -175,10 +179,13 @@ class SessionManager:
         """
         sessions = []
         if search_dir.exists():
-            sessions = sorted([
-                d for d in search_dir.iterdir()
-                if d.is_dir() and d.name.endswith(self.SUFFIX)
-            ])
+            sessions = sorted(
+                [
+                    d
+                    for d in search_dir.iterdir()
+                    if d.is_dir() and d.name.endswith(self.SUFFIX)
+                ]
+            )
         return sessions
 
     def get_recent_sessions(self, max_count: int = 10) -> List[Path]:
@@ -194,14 +201,11 @@ class SessionManager:
             return []
 
         try:
-            with open(self.settings_file, 'r') as f:
+            with open(self.settings_file, "r") as f:
                 settings = json.load(f)
-                recent = settings.get('recent_sessions', [])
+                recent = settings.get("recent_sessions", [])
                 # Filter out non-existent paths
-                valid_recent = [
-                    Path(p) for p in recent[:max_count]
-                    if Path(p).exists()
-                ]
+                valid_recent = [Path(p) for p in recent[:max_count] if Path(p).exists()]
                 return valid_recent
         except (json.JSONDecodeError, IOError):
             return []
@@ -216,9 +220,9 @@ class SessionManager:
             return None
 
         try:
-            with open(self.settings_file, 'r') as f:
+            with open(self.settings_file, "r") as f:
                 settings = json.load(f)
-                last_path = settings.get('last_session_path')
+                last_path = settings.get("last_session_path")
                 if last_path and Path(last_path).exists():
                     return Path(last_path)
         except (json.JSONDecodeError, IOError):
@@ -235,47 +239,47 @@ class SessionManager:
         Returns:
             Dictionary with validation results
         """
-        result = {
-            'valid': True,
-            'errors': [],
-            'warnings': []
-        }
+        result = {"valid": True, "errors": [], "warnings": []}
 
         # Check directory exists
         if not session_dir.exists():
-            result['valid'] = False
-            result['errors'].append(f"Directory not found: {session_dir}")
+            result["valid"] = False
+            result["errors"].append(f"Directory not found: {session_dir}")
             return result
 
         # Check for session.json
         session_file = session_dir / self.SESSION_FILE
         if not session_file.exists():
-            result['valid'] = False
-            result['errors'].append("Missing session.json")
+            result["valid"] = False
+            result["errors"].append("Missing session.json")
             return result
 
         # Try to load session
         try:
-            session = Session.load(session_dir)
+            Session.load(session_dir)
         except Exception as e:
-            result['valid'] = False
-            result['errors'].append(f"Failed to load session: {e}")
+            result["valid"] = False
+            result["errors"].append(f"Failed to load session: {e}")
             return result
 
         # Check required directories
-        for subdir in ['recordings', 'trash']:
+        for subdir in ["recordings", "trash"]:
             if not (session_dir / subdir).exists():
-                result['warnings'].append(f"Missing {subdir} directory")
+                result["warnings"].append(f"Missing {subdir} directory")
 
         # Check script file
         script_file = session_dir / self.SCRIPT_FILE
         if not script_file.exists():
-            result['valid'] = False
-            result['errors'].append(f"Required script file not found: {self.SCRIPT_FILE}")
+            result["valid"] = False
+            result["errors"].append(
+                f"Required script file not found: {self.SCRIPT_FILE}"
+            )
 
         return result
 
-    def get_compatible_devices(self, audio_config: SessionConfig) -> List[Dict[str, Any]]:
+    def get_compatible_devices(
+        self, audio_config: SessionConfig
+    ) -> List[Dict[str, Any]]:
         """Get list of compatible audio devices for given configuration.
 
         Args:
@@ -288,9 +292,9 @@ class SessionManager:
         devices = sd.query_devices()
 
         for i, device in enumerate(devices):
-            if device['max_input_channels'] > 0:  # Input device
+            if device["max_input_channels"] > 0:  # Input device
                 device_info = dict(device)
-                device_info['index'] = i
+                device_info["index"] = i
                 if audio_config.is_compatible_with_device(device_info):
                     compatible.append(device_info)
 
@@ -334,13 +338,13 @@ class SessionManager:
         settings = {}
         if self.settings_file.exists():
             try:
-                with open(self.settings_file, 'r') as f:
+                with open(self.settings_file, "r") as f:
                     settings = json.load(f)
             except (json.JSONDecodeError, IOError):
                 settings = {}
 
         # Update recent sessions
-        recent = settings.get('recent_sessions', [])
+        recent = settings.get("recent_sessions", [])
         session_path = str(session_dir.absolute())
 
         # Remove if already in list
@@ -354,12 +358,12 @@ class SessionManager:
         recent = recent[:10]
 
         # Update settings
-        settings['recent_sessions'] = recent
-        settings['last_session_path'] = session_path
+        settings["recent_sessions"] = recent
+        settings["last_session_path"] = session_path
 
         # Save settings
         self.settings_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.settings_file, 'w') as f:
+        with open(self.settings_file, "w") as f:
             json.dump(settings, f, indent=2)
 
     def get_default_base_dir(self) -> Optional[Path]:
@@ -372,9 +376,9 @@ class SessionManager:
             return None
 
         try:
-            with open(self.settings_file, 'r') as f:
+            with open(self.settings_file, "r") as f:
                 settings = json.load(f)
-                base_dir = settings.get('default_base_dir')
+                base_dir = settings.get("default_base_dir")
                 if base_dir:
                     path = Path(base_dir)
                     if path.exists():
@@ -394,15 +398,15 @@ class SessionManager:
         settings = {}
         if self.settings_file.exists():
             try:
-                with open(self.settings_file, 'r') as f:
+                with open(self.settings_file, "r") as f:
                     settings = json.load(f)
             except (json.JSONDecodeError, IOError):
                 settings = {}
 
         # Update default base dir
-        settings['default_base_dir'] = str(base_dir.absolute())
+        settings["default_base_dir"] = str(base_dir.absolute())
 
         # Save settings
         self.settings_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.settings_file, 'w') as f:
+        with open(self.settings_file, "w") as f:
             json.dump(settings, f, indent=2)

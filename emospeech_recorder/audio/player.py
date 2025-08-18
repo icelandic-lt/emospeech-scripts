@@ -45,8 +45,7 @@ class AudioPlayer:
 
         # Calculate blocksize from response time setting
         self.blocksize = calculate_blocksize(
-            config.sync_response_time_ms,
-            config.sample_rate
+            config.sync_response_time_ms, config.sample_rate
         )
 
         # Level calculator for meter updates
@@ -56,7 +55,9 @@ class AudioPlayer:
         """Update output device index used for future streams."""
         self.config.output_device = index
 
-    def start_playback(self, audio_data: np.ndarray, sample_rate: int, audio_buffer: AudioBuffer) -> None:
+    def start_playback(
+        self, audio_data: np.ndarray, sample_rate: int, audio_buffer: AudioBuffer
+    ) -> None:
         """Start playback.
 
         Args:
@@ -88,7 +89,7 @@ class AudioPlayer:
         # Create output stream with callback
         # Optional routing to a specific physical output channel: we emulate mapping
         # by opening a stream with enough channels and writing only to the target one.
-        output_mapping = getattr(self, '_output_channel_mapping', None)
+        output_mapping = getattr(self, "_output_channel_mapping", None)
         target_channel_index = 0
         num_stream_channels = 1
         if isinstance(output_mapping, list) and len(output_mapping) == 1:
@@ -109,9 +110,9 @@ class AudioPlayer:
                 blocksize=self.blocksize,
                 device=self.config.output_device,
                 channels=num_stream_channels,
-                dtype='float32',  # Always use float32 for sounddevice
+                dtype="float32",  # Always use float32 for sounddevice
                 callback=self._audio_callback,
-                finished_callback=self._finished_callback
+                finished_callback=self._finished_callback,
             )
         except (sd.PortAudioError, OSError) as e:
             try:
@@ -120,9 +121,9 @@ class AudioPlayer:
                     blocksize=self.blocksize,
                     device=None,
                     channels=num_stream_channels,
-                    dtype='float32',
+                    dtype="float32",
                     callback=self._audio_callback,
-                    finished_callback=self._finished_callback
+                    finished_callback=self._finished_callback,
                 )
             except (sd.PortAudioError, OSError) as e:
                 print(f"Error opening OutputStream: {e}")
@@ -156,8 +157,13 @@ class AudioPlayer:
             self.audio_buffer = None
             self.audio_data = None
 
-    def _audio_callback(self, outdata: np.ndarray, frames: int,
-                       time_info: Any, status: Optional[sd.CallbackFlags]) -> None:
+    def _audio_callback(
+        self,
+        outdata: np.ndarray,
+        frames: int,
+        time_info: Any,
+        status: Optional[sd.CallbackFlags],
+    ) -> None:
         """Audio stream callback with hardware timing.
 
         Args:
@@ -176,8 +182,7 @@ class AudioPlayer:
 
         # Update shared state with hardware timing
         self.shared_state.update_playback_position(
-            self.current_position,
-            time_info.outputBufferDacTime
+            self.current_position, time_info.outputBufferDacTime
         )
         # Explicitly mark PLAYING to avoid early IDLE reads
         self.shared_state.set_playback_state(status=2)
@@ -190,9 +195,9 @@ class AudioPlayer:
                 # Copy audio data
                 to_copy = min(frames, remaining)
                 audio_chunk = self.audio_data[
-                    self.current_position:self.current_position + to_copy
+                    self.current_position : self.current_position + to_copy
                 ]
-                out_channel_index = getattr(self, '_playback_output_channel_index', 0)
+                out_channel_index = getattr(self, "_playback_output_channel_index", 0)
                 # Only clear buffer if using multi-channel output
                 if outdata.shape[1] > 1:
                     outdata.fill(0)
@@ -209,7 +214,7 @@ class AudioPlayer:
                         rms_db=rms_db,
                         peak_db=peak_db,
                         peak_hold_db=peak_hold_db,
-                        frame_count=self.level_calculator.get_frame_count()
+                        frame_count=self.level_calculator.get_frame_count(),
                     )
 
                 # Fill rest with silence if needed
@@ -254,10 +259,12 @@ class AudioPlayer:
             self.shared_state.close()
 
 
-def playback_process(config: AudioConfig,
-                     control_queue: mp.Queue,
-                     shared_state_name: str,
-                     shutdown_event: mp.Event) -> None:
+def playback_process(
+    config: AudioConfig,
+    control_queue: mp.Queue,
+    shared_state_name: str,
+    shutdown_event: mp.Event,
+) -> None:
     """Process function for audio playback with hardware synchronization.
 
     Args:
@@ -282,46 +289,46 @@ def playback_process(config: AudioConfig,
                     print(f"Warning: Received non-dictionary command: {command}")
                     continue
 
-                action = command.get('action')
+                action = command.get("action")
 
-                if action == 'play':
+                if action == "play":
                     # Get audio buffer metadata
-                    buffer_metadata = command.get('buffer_metadata')
+                    buffer_metadata = command.get("buffer_metadata")
                     if buffer_metadata:
                         # Attach to shared audio buffer
                         if attached_buffer:
                             attached_buffer.close()
 
                         attached_buffer = AudioBuffer.attach_to_existing(
-                            buffer_metadata['name'],
-                            tuple(buffer_metadata['shape']),
-                            np.dtype(buffer_metadata['dtype'])
+                            buffer_metadata["name"],
+                            tuple(buffer_metadata["shape"]),
+                            np.dtype(buffer_metadata["dtype"]),
                         )
 
                         # Start playback
                         audio_data = attached_buffer.get_array()
-                        sample_rate = command.get('sample_rate', config.sample_rate)
+                        sample_rate = command.get("sample_rate", config.sample_rate)
                         player.start_playback(audio_data, sample_rate, attached_buffer)
 
-                elif action == 'stop':
+                elif action == "stop":
                     player.stop_playback()
                     # Clean up attached buffer when playback stops
                     if attached_buffer:
                         attached_buffer.close()
                         attached_buffer = None
 
-                elif action == 'quit':
+                elif action == "quit":
                     break
 
-                elif action == 'set_output_device':
-                    value = command.get('index', None)
+                elif action == "set_output_device":
+                    value = command.get("index", None)
                     if isinstance(value, int):
                         player.set_output_device(value)
                     elif value is None:
                         player.set_output_device(None)
 
-                elif action == 'set_output_channel_mapping':
-                    mapping = command.get('mapping', None)
+                elif action == "set_output_channel_mapping":
+                    mapping = command.get("mapping", None)
                     try:
                         if isinstance(mapping, list):
                             mapping = [int(x) for x in mapping]

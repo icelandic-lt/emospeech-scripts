@@ -1,7 +1,7 @@
 """Open Session Dialog for loading existing sessions."""
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import filedialog, messagebox
 from pathlib import Path
 from typing import Optional
 

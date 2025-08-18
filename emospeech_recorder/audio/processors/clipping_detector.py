@@ -19,9 +19,11 @@ class ClippingDetector(AudioProcessor[bool]):
         threshold: Normalized threshold for clipping detection (0.0 to 1.0)
     """
 
-    def __init__(self,
-                 sample_rate: int = AudioConstants.DEFAULT_SAMPLE_RATE,
-                 threshold: float = AudioConstants.CLIPPING_THRESHOLD):
+    def __init__(
+        self,
+        sample_rate: int = AudioConstants.DEFAULT_SAMPLE_RATE,
+        threshold: float = AudioConstants.CLIPPING_THRESHOLD,
+    ):
         """Initialize the clipping detector.
 
         Args:
@@ -47,9 +49,12 @@ class ClippingDetector(AudioProcessor[bool]):
         max_val = np.max(np.abs(audio_norm))
         return max_val >= self.threshold
 
-    def find_clipping_positions(self, audio_data: np.ndarray,
-                               hop_length: int = AudioConstants.HOP_LENGTH,
-                               chunk_size: int = AudioConstants.AUDIO_CHUNK_SIZE) -> List[int]:
+    def find_clipping_positions(
+        self,
+        audio_data: np.ndarray,
+        hop_length: int = AudioConstants.HOP_LENGTH,
+        chunk_size: int = AudioConstants.AUDIO_CHUNK_SIZE,
+    ) -> List[int]:
         """Find all clipping positions in audio data.
 
         Scans through audio in chunks to find positions where clipping occurs.
@@ -69,13 +74,16 @@ class ClippingDetector(AudioProcessor[bool]):
         clipping_positions = []
 
         for i in range(0, len(audio_data), chunk_size):
-            chunk = audio_data[i:i + chunk_size]
+            chunk = audio_data[i : i + chunk_size]
             if len(chunk) > 0 and self.process(chunk):
                 frame_pos = i // hop_length
 
                 # Avoid duplicate markers too close together
-                if (not clipping_positions or
-                    frame_pos - clipping_positions[-1] > AudioConstants.MIN_CLIPPING_MARKER_DISTANCE):
+                if (
+                    not clipping_positions
+                    or frame_pos - clipping_positions[-1]
+                    > AudioConstants.MIN_CLIPPING_MARKER_DISTANCE
+                ):
                     clipping_positions.append(frame_pos)
 
         return clipping_positions

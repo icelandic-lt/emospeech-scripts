@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from tkinter import font
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, List
 from dataclasses import dataclass
 
 from ...utils.device_manager import get_device_manager

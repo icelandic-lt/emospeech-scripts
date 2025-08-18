@@ -1,6 +1,6 @@
 """Frequency axis management for mel spectrograms."""
 
-from typing import Optional, List, Tuple
+from typing import List, Tuple
 import numpy as np
 import librosa
 from matplotlib.axes import Axes
@@ -57,8 +57,8 @@ class FrequencyAxisManager:
         self._peak_indicator_position = None
 
         params = MelProcessorFactory.calculate_adaptive_params(sample_rate, fmin)
-        adaptive_n_mels = params['n_mels']
-        adaptive_fmax = params['fmax']
+        adaptive_n_mels = params["n_mels"]
+        adaptive_fmax = params["fmax"]
 
         # Update axis
         mel_freqs = self._get_mel_frequencies(adaptive_n_mels, fmin, adaptive_fmax)
@@ -68,8 +68,9 @@ class FrequencyAxisManager:
 
         return adaptive_n_mels, adaptive_fmax
 
-    def highlight_max_frequency(self, max_freq: float, n_mels: int,
-                              fmin: float, fmax: float) -> None:
+    def highlight_max_frequency(
+        self, max_freq: float, n_mels: int, fmin: float, fmax: float
+    ) -> None:
         """Add or update orange highlight for maximum detected frequency.
 
         Args:
@@ -86,8 +87,10 @@ class FrequencyAxisManager:
         max_freq_bin = np.argmin(np.abs(mel_freqs - max_freq))
 
         # Only update if peak position has changed significantly
-        if (self._peak_indicator_position is not None and
-            abs(max_freq_bin - self._peak_indicator_position) < 0.5):
+        if (
+            self._peak_indicator_position is not None
+            and abs(max_freq_bin - self._peak_indicator_position) < 0.5
+        ):
             return  # Peak hasn't moved enough to warrant update
 
         # Start with base ticks and labels
@@ -131,26 +134,25 @@ class FrequencyAxisManager:
             # Reset all labels to default style first
             for label in self.ax.get_yticklabels():
                 label.set_color(UIConstants.COLOR_TEXT_INACTIVE)
-                label.set_weight('normal')
+                label.set_weight("normal")
 
             # Then highlight only the peak indicator
             for i, tick in enumerate(all_ticks):
                 if tick == max_freq_bin:
-                    self.ax.get_yticklabels()[i].set_color('orange')
-                    self.ax.get_yticklabels()[i].set_weight('bold')
+                    self.ax.get_yticklabels()[i].set_color("orange")
+                    self.ax.get_yticklabels()[i].set_weight("bold")
                     break
 
     @staticmethod
     def _get_mel_frequencies(n_mels: int, fmin: float, fmax: float) -> np.ndarray:
         """Get mel frequency values for each bin."""
-        return librosa.mel_frequencies(
-            n_mels=n_mels + 2,
-            fmin=fmin,
-            fmax=fmax
-        )[1:-1]  # Remove edge bins
+        return librosa.mel_frequencies(n_mels=n_mels + 2, fmin=fmin, fmax=fmax)[
+            1:-1
+        ]  # Remove edge bins
 
-    def _calculate_ticks_and_labels(self, mel_freqs: np.ndarray,
-                                   fmax: float) -> Tuple[np.ndarray, List[str]]:
+    def _calculate_ticks_and_labels(
+        self, mel_freqs: np.ndarray, fmax: float
+    ) -> Tuple[np.ndarray, List[str]]:
         """Calculate tick positions and labels."""
         n_mels = len(mel_freqs)
         n_ticks = UIConstants.N_FREQUENCY_TICKS
@@ -182,11 +184,11 @@ class FrequencyAxisManager:
     def _format_frequency(freq: float) -> str:
         """Format frequency value for display."""
         if freq < 1000:
-            return f'{int(freq)}'
+            return f"{int(freq)}"
         elif freq == int(freq / 1000) * 1000:  # Round kHz
-            return f'{int(freq/1000)}k'
+            return f"{int(freq/1000)}k"
         else:
-            return f'{freq/1000:.1f}k'
+            return f"{freq/1000:.1f}k"
 
     def _apply_ticks_and_labels(self, ticks: np.ndarray, labels: List[str]) -> None:
         """Apply ticks and labels to axis."""
@@ -201,4 +203,4 @@ class FrequencyAxisManager:
         """Reset all labels to default color and weight."""
         for label in self.ax.get_yticklabels():
             label.set_color(UIConstants.COLOR_TEXT_INACTIVE)
-            label.set_weight('normal')
+            label.set_weight("normal")

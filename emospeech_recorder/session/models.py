@@ -5,7 +5,7 @@ including Session, SessionConfig, and SpeakerInfo.
 """
 
 from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from pathlib import Path
 from datetime import datetime
 import json
@@ -28,7 +28,7 @@ class SpeakerInfo:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'SpeakerInfo':
+    def from_dict(cls, data: Dict[str, Any]) -> "SpeakerInfo":
         """Create instance from dictionary."""
         return cls(**data)
 
@@ -51,16 +51,16 @@ class SessionConfig:
         """Convert to dictionary for JSON serialization."""
         data = asdict(self)
         # Ensure we never save None for input_device
-        if data.get('input_device') is None:
-            data['input_device'] = "default"
+        if data.get("input_device") is None:
+            data["input_device"] = "default"
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'SessionConfig':
+    def from_dict(cls, data: Dict[str, Any]) -> "SessionConfig":
         """Create instance from dictionary."""
         # Handle legacy sessions with None input_device
-        if 'input_device' in data and data['input_device'] is None:
-            data['input_device'] = "default"
+        if "input_device" in data and data["input_device"] is None:
+            data["input_device"] = "default"
         return cls(**data)
 
     def is_compatible_with_device(self, device_info: Dict[str, Any]) -> bool:
@@ -72,7 +72,7 @@ class SessionConfig:
         Returns:
             True if device can support these settings
         """
-        device_name = device_info.get('name')
+        device_name = device_info.get("name")
         if not device_name:
             return False
 
@@ -81,7 +81,7 @@ class SessionConfig:
             device_name=device_name,
             sample_rate=self.sample_rate,
             bit_depth=self.bit_depth,
-            channels=self.channels
+            channels=self.channels,
         )
 
     def validate_device(self) -> bool:
@@ -124,8 +124,12 @@ class SessionConfig:
 
         # Use device manager to find a compatible device
         result = device_manager.find_compatible_device(
-            self.sample_rate, self.bit_depth, self.channels,
-            preferred_name=self.input_device if self.input_device != "default" else None
+            self.sample_rate,
+            self.bit_depth,
+            self.channels,
+            preferred_name=(
+                self.input_device if self.input_device != "default" else None
+            ),
         )
 
         return result
@@ -151,27 +155,29 @@ class Session:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         data = {
-            'version': self.version,
-            'name': self.name,
-            'script_path': self.script_path
+            "version": self.version,
+            "name": self.name,
+            "script_path": self.script_path,
         }
 
         if self.speaker:
-            data['speaker'] = self.speaker.to_dict()
+            data["speaker"] = self.speaker.to_dict()
 
         if self.audio_config:
-            data['audio_config'] = self.audio_config.to_dict()
+            data["audio_config"] = self.audio_config.to_dict()
 
         if self.created_at:
-            data['created_at'] = self.created_at.isoformat()
+            data["created_at"] = self.created_at.isoformat()
 
         if self.modified_at:
-            data['modified_at'] = self.modified_at.isoformat()
+            data["modified_at"] = self.modified_at.isoformat()
 
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], session_dir: Optional[Path] = None) -> 'Session':
+    def from_dict(
+        cls, data: Dict[str, Any], session_dir: Optional[Path] = None
+    ) -> "Session":
         """Create instance from dictionary.
 
         Args:
@@ -182,23 +188,23 @@ class Session:
             Session instance
         """
         session = cls(
-            version=data.get('version', '1.0'),
-            name=data.get('name', ''),
-            script_path=data.get('script_path', 'script.txt'),
-            session_dir=session_dir
+            version=data.get("version", "1.0"),
+            name=data.get("name", ""),
+            script_path=data.get("script_path", "script.txt"),
+            session_dir=session_dir,
         )
 
-        if 'speaker' in data:
-            session.speaker = SpeakerInfo.from_dict(data['speaker'])
+        if "speaker" in data:
+            session.speaker = SpeakerInfo.from_dict(data["speaker"])
 
-        if 'audio_config' in data:
-            session.audio_config = SessionConfig.from_dict(data['audio_config'])
+        if "audio_config" in data:
+            session.audio_config = SessionConfig.from_dict(data["audio_config"])
 
-        if 'created_at' in data:
-            session.created_at = datetime.fromisoformat(data['created_at'])
+        if "created_at" in data:
+            session.created_at = datetime.fromisoformat(data["created_at"])
 
-        if 'modified_at' in data:
-            session.modified_at = datetime.fromisoformat(data['modified_at'])
+        if "modified_at" in data:
+            session.modified_at = datetime.fromisoformat(data["modified_at"])
 
         return session
 
@@ -215,11 +221,11 @@ class Session:
         self.modified_at = datetime.now()
 
         session_file = save_dir / "session.json"
-        with open(session_file, 'w', encoding='utf-8') as f:
+        with open(session_file, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
 
     @classmethod
-    def load(cls, session_dir: Path) -> 'Session':
+    def load(cls, session_dir: Path) -> "Session":
         """Load session from directory.
 
         Args:
@@ -236,7 +242,7 @@ class Session:
         if not session_file.exists():
             raise FileNotFoundError(f"No session.json found in {session_dir}")
 
-        with open(session_file, 'r', encoding='utf-8') as f:
+        with open(session_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         return cls.from_dict(data, session_dir)

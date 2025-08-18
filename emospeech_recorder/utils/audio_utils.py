@@ -5,8 +5,7 @@ import numpy as np
 from ..constants import AudioConstants
 
 
-def normalize_audio(audio_data: np.ndarray,
-                   copy: bool = False) -> np.ndarray:
+def normalize_audio(audio_data: np.ndarray, copy: bool = False) -> np.ndarray:
     """Normalize audio data to floating point range [-1, 1].
 
     Handles various audio formats:
@@ -43,7 +42,6 @@ def normalize_audio(audio_data: np.ndarray,
     else:
         # Unknown format, try to convert to float32
         return audio_data.astype(np.float32)
-
 
 
 def convert_to_mono(audio_data: np.ndarray) -> np.ndarray:
@@ -106,8 +104,8 @@ def calculate_blocksize(response_time_ms: float, sample_rate: int) -> int:
     ideal_blocksize = int(sample_rate * response_time_ms / 1000)
 
     # Define limits
-    MIN_BLOCKSIZE = 64   # Hardware minimum
-    MAX_BLOCKSIZE = 4096 # Prevent excessive latency
+    MIN_BLOCKSIZE = 64  # Hardware minimum
+    MAX_BLOCKSIZE = 4096  # Prevent excessive latency
 
     # Round to nearest power of 2
     blocksize = round_to_nearest_power_of_2(ideal_blocksize)
@@ -178,7 +176,7 @@ def rms(samples: np.ndarray) -> float:
     Returns:
         RMS value
     """
-    return np.sqrt(np.mean(samples ** 2))
+    return np.sqrt(np.mean(samples**2))
 
 
 def peak(samples: np.ndarray) -> float:

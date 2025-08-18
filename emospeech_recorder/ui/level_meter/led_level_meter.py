@@ -26,7 +26,9 @@ class LEDLevelMeter(tk.Frame):
 
     # Non-linear scale to give more resolution in the upper, critical range
     SCALE_PIVOT_DB = -30.0
-    SCALE_BOTTOM_FRACTION = 0.4  # portion of the meter used for [-60..pivot], top gets the rest
+    SCALE_BOTTOM_FRACTION = (
+        0.4  # portion of the meter used for [-60..pivot], top gets the rest
+    )
 
     # Colors
     COLOR_BACKGROUND = "#1e1e1e"
@@ -41,9 +43,12 @@ class LEDLevelMeter(tk.Frame):
     COLOR_GRID = "#444444"
     DIM_FACTOR = 0.25  # Intensity factor for dimming inactive LEDs
 
-    def __init__(self, parent: tk.Widget,
-                 shared_state: SharedState,
-                 config: Optional[LevelMeterConfig] = None):
+    def __init__(
+        self,
+        parent: tk.Widget,
+        shared_state: SharedState,
+        config: Optional[LevelMeterConfig] = None,
+    ):
         """Initialize LED level meter widget.
 
         Args:
@@ -80,7 +85,7 @@ class LEDLevelMeter(tk.Frame):
 
         # Control flag to stop scheduling when widget is destroyed
         self._running: bool = True
-        self.bind('<Destroy>', lambda e: setattr(self, '_running', False))
+        self.bind("<Destroy>", lambda e: setattr(self, "_running", False))
 
         self._create_ui()
         self._schedule_update()
@@ -92,6 +97,7 @@ class LEDLevelMeter(tk.Frame):
             self._update_display()
         except Exception:
             pass
+
     def _create_ui(self) -> None:
         """Create the LED level meter UI components."""
         # Labels at top (with values)
@@ -101,15 +107,39 @@ class LEDLevelMeter(tk.Frame):
         # Peak row (top)
         peak_row = tk.Frame(self.label_frame, bg=self.COLOR_BACKGROUND)
         peak_row.pack(fill=tk.X)
-        tk.Label(peak_row, text="Peak", fg=self.COLOR_PEAK, bg=self.COLOR_BACKGROUND, font=('TkDefaultFont', 9)).pack(side=tk.LEFT)
-        self.peak_value_label = tk.Label(peak_row, text="-- dB", fg=self.COLOR_TEXT, bg=self.COLOR_BACKGROUND, font=('TkDefaultFont', 9))
+        tk.Label(
+            peak_row,
+            text="Peak",
+            fg=self.COLOR_PEAK,
+            bg=self.COLOR_BACKGROUND,
+            font=("TkDefaultFont", 9),
+        ).pack(side=tk.LEFT)
+        self.peak_value_label = tk.Label(
+            peak_row,
+            text="-- dB",
+            fg=self.COLOR_TEXT,
+            bg=self.COLOR_BACKGROUND,
+            font=("TkDefaultFont", 9),
+        )
         self.peak_value_label.pack(side=tk.RIGHT)
 
         # RMS row (below)
         rms_row = tk.Frame(self.label_frame, bg=self.COLOR_BACKGROUND)
         rms_row.pack(fill=tk.X)
-        tk.Label(rms_row, text="RMS", fg=self.COLOR_RMS, bg=self.COLOR_BACKGROUND, font=('TkDefaultFont', 9)).pack(side=tk.LEFT)
-        self.rms_value_label = tk.Label(rms_row, text="-- dB", fg=self.COLOR_TEXT, bg=self.COLOR_BACKGROUND, font=('TkDefaultFont', 9))
+        tk.Label(
+            rms_row,
+            text="RMS",
+            fg=self.COLOR_RMS,
+            bg=self.COLOR_BACKGROUND,
+            font=("TkDefaultFont", 9),
+        ).pack(side=tk.LEFT)
+        self.rms_value_label = tk.Label(
+            rms_row,
+            text="-- dB",
+            fg=self.COLOR_TEXT,
+            bg=self.COLOR_BACKGROUND,
+            font=("TkDefaultFont", 9),
+        )
         self.rms_value_label.pack(side=tk.RIGHT)
 
         # Container frame for meter and scale
@@ -122,7 +152,7 @@ class LEDLevelMeter(tk.Frame):
             width=self.METER_WIDTH,
             height=self.METER_MIN_HEIGHT,
             bg=self.COLOR_BACKGROUND,
-            highlightthickness=0
+            highlightthickness=0,
         )
         self.canvas.pack(side=tk.LEFT, padx=(5, 0))
 
@@ -132,7 +162,7 @@ class LEDLevelMeter(tk.Frame):
             width=self.SCALE_WIDTH,
             height=self.METER_MIN_HEIGHT,
             bg=self.COLOR_BACKGROUND,
-            highlightthickness=0
+            highlightthickness=0,
         )
         self.scale_canvas.pack(side=tk.LEFT, padx=(2, 5))
 
@@ -145,12 +175,12 @@ class LEDLevelMeter(tk.Frame):
             text="-- dB",
             fg=self.COLOR_TEXT,
             bg=self.COLOR_BACKGROUND,
-            font=('TkDefaultFont', 12)
+            font=("TkDefaultFont", 12),
         )
         self.level_label.pack(pady=(5, 2))
 
         # Bind resize of container to adjust canvas heights and rebuild LED layout
-        self.bind('<Configure>', self._on_resize)
+        self.bind("<Configure>", self._on_resize)
 
     def _rebuild_geometry(self) -> None:
         """Rebuild LED layout and scale based on current height."""
@@ -164,9 +194,14 @@ class LEDLevelMeter(tk.Frame):
         # total = N * (h + s) - s  => choose s within bounds, compute h
         spacing = max(
             self.LED_MIN_SPACING,
-            min(self.LED_MAX_SPACING, int(available / (self.LED_COUNT * self.LED_SPACING_SCALE)))
+            min(
+                self.LED_MAX_SPACING,
+                int(available / (self.LED_COUNT * self.LED_SPACING_SCALE)),
+            ),
         )
-        led_height = int((available + spacing - self.LED_COUNT * spacing) / self.LED_COUNT)
+        led_height = int(
+            (available + spacing - self.LED_COUNT * spacing) / self.LED_COUNT
+        )
         led_height = max(self.LED_MIN_HEIGHT, min(self.LED_MAX_HEIGHT, led_height))
 
         total_led_height = self.LED_COUNT * (led_height + spacing) - spacing
@@ -179,7 +214,7 @@ class LEDLevelMeter(tk.Frame):
         self._geom_start_y = start_y
 
         # Clear canvas before drawing
-        self.canvas.delete('all')
+        self.canvas.delete("all")
 
         # Rebuild LEDs
         self.leds.clear()
@@ -190,11 +225,13 @@ class LEDLevelMeter(tk.Frame):
             x0 = self.LED_X_INSET
             x1 = self.METER_WIDTH - self.LED_X_INSET
             led = self.canvas.create_rectangle(
-                x0, y,
-                x1, y + led_height,
+                x0,
+                y,
+                x1,
+                y + led_height,
                 fill=self.COLOR_LED_OFF,
                 outline=self.COLOR_LED_OFF,
-                width=1
+                width=1,
             )
             self.leds.append((led, color))
 
@@ -207,7 +244,7 @@ class LEDLevelMeter(tk.Frame):
         self._peak_hold_line_id = None
 
         # Rebuild scale
-        self.scale_canvas.delete('all')
+        self.scale_canvas.delete("all")
         self._draw_scale_dynamic(height, led_height, spacing, start_y)
 
     def _led_index_to_db(self, index: int) -> float:
@@ -240,11 +277,19 @@ class LEDLevelMeter(tk.Frame):
 
         if db <= self.SCALE_PIVOT_DB:
             # Map [-60..pivot] → [0..bottom_frac]
-            rel = (db - (-60.0)) / (self.SCALE_PIVOT_DB - (-60.0)) if self.SCALE_PIVOT_DB > -60.0 else 0.0
+            rel = (
+                (db - (-60.0)) / (self.SCALE_PIVOT_DB - (-60.0))
+                if self.SCALE_PIVOT_DB > -60.0
+                else 0.0
+            )
             position = rel * bottom_frac
         else:
             # Map (pivot..0] → (bottom_frac..1]
-            rel = (db - self.SCALE_PIVOT_DB) / (0.0 - self.SCALE_PIVOT_DB) if self.SCALE_PIVOT_DB < 0.0 else 0.0
+            rel = (
+                (db - self.SCALE_PIVOT_DB) / (0.0 - self.SCALE_PIVOT_DB)
+                if self.SCALE_PIVOT_DB < 0.0
+                else 0.0
+            )
             position = bottom_frac + rel * top_frac
 
         # position 0..1 → LED count 0..LED_COUNT
@@ -273,8 +318,9 @@ class LEDLevelMeter(tk.Frame):
         Returns:
             Hex color string
         """
+
         def hex_to_rgb(h: str) -> tuple[int, int, int]:
-            h = h.lstrip('#')
+            h = h.lstrip("#")
             return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
         def rgb_to_hex(r: int, g: int, b: int) -> str:
@@ -287,7 +333,9 @@ class LEDLevelMeter(tk.Frame):
         b = int(bg_b + (src_b - bg_b) * max(0.0, min(1.0, factor)))
         return rgb_to_hex(r, g, b)
 
-    def _draw_scale_dynamic(self, height: int, led_height: int, spacing: int, start_y: int) -> None:
+    def _draw_scale_dynamic(
+        self, height: int, led_height: int, spacing: int, start_y: int
+    ) -> None:
         """Draw the dB scale aligned to LED centers with readable fonts."""
         # Adjusted ticks: 0, -6, -12, ... for clearer top range
         db_marks = [0, -6, -12, -18, -24, -30, -40, -50, -60]
@@ -295,21 +343,56 @@ class LEDLevelMeter(tk.Frame):
         for db in db_marks:
             # place tick at the y of the LED that contains this value
             led_index = min(max(self._db_to_led_count(db) - 1, 0), self.LED_COUNT - 1)
-            y = start_y + (self.LED_COUNT - 1 - led_index) * (led_height + spacing) + led_height / 2
+            y = (
+                start_y
+                + (self.LED_COUNT - 1 - led_index) * (led_height + spacing)
+                + led_height / 2
+            )
             self.scale_canvas.create_line(0, y, 12, y, fill=self.COLOR_GRID, width=1)
-            self.scale_canvas.create_text(16, y, text=str(db), fill=self.COLOR_TEXT, font=('TkDefaultFont', 10), anchor='w')
+            self.scale_canvas.create_text(
+                16,
+                y,
+                text=str(db),
+                fill=self.COLOR_TEXT,
+                font=("TkDefaultFont", 10),
+                anchor="w",
+            )
 
         # Horizontal target lines on scale
         tmin_idx = self._db_to_led_count(self.config.target_min) - 1
         tmax_idx = self._db_to_led_count(self.config.target_max) - 1
         if 0 <= tmin_idx < self.LED_COUNT:
-            y = start_y + (self.LED_COUNT - 1 - tmin_idx) * (led_height + spacing) + led_height / 2
+            y = (
+                start_y
+                + (self.LED_COUNT - 1 - tmin_idx) * (led_height + spacing)
+                + led_height / 2
+            )
             # Draw through LED meter only
-            self.canvas.create_line(self.LED_X_INSET, y, self.METER_WIDTH - self.LED_X_INSET, y, fill=self.COLOR_OPTIMAL, width=2, dash=(3, 2))
+            self.canvas.create_line(
+                self.LED_X_INSET,
+                y,
+                self.METER_WIDTH - self.LED_X_INSET,
+                y,
+                fill=self.COLOR_OPTIMAL,
+                width=2,
+                dash=(3, 2),
+            )
         if 0 <= tmax_idx < self.LED_COUNT:
-            y = start_y + (self.LED_COUNT - 1 - tmax_idx) * (led_height + spacing) + led_height / 2
+            y = (
+                start_y
+                + (self.LED_COUNT - 1 - tmax_idx) * (led_height + spacing)
+                + led_height / 2
+            )
             # Draw through LED meter only
-            self.canvas.create_line(self.LED_X_INSET, y, self.METER_WIDTH - self.LED_X_INSET, y, fill=self.COLOR_OPTIMAL, width=2, dash=(3, 2))
+            self.canvas.create_line(
+                self.LED_X_INSET,
+                y,
+                self.METER_WIDTH - self.LED_X_INSET,
+                y,
+                fill=self.COLOR_OPTIMAL,
+                width=2,
+                dash=(3, 2),
+            )
 
     def _draw_target_range_indicators(self) -> None:
         """Draw visual indicators for the target range on the scale."""
@@ -318,29 +401,45 @@ class LEDLevelMeter(tk.Frame):
         target_max_index = self._db_to_led_count(self.config.target_max) - 1
 
         # Calculate vertical positions
-        total_led_height = self.LED_COUNT * (self.LED_HEIGHT + self.LED_SPACING) - self.LED_SPACING
+        total_led_height = (
+            self.LED_COUNT * (self.LED_HEIGHT + self.LED_SPACING) - self.LED_SPACING
+        )
         start_y = (self.METER_HEIGHT - total_led_height) / 2
 
         # Draw target min line
         if 0 <= target_min_index < self.LED_COUNT:
-            y_min = start_y + (self.LED_COUNT - 1 - target_min_index) * (self.LED_HEIGHT + self.LED_SPACING) + self.LED_HEIGHT / 2
+            y_min = (
+                start_y
+                + (self.LED_COUNT - 1 - target_min_index)
+                * (self.LED_HEIGHT + self.LED_SPACING)
+                + self.LED_HEIGHT / 2
+            )
             self.scale_canvas.create_line(
-                0, y_min,
-                self.SCALE_WIDTH, y_min,
+                0,
+                y_min,
+                self.SCALE_WIDTH,
+                y_min,
                 fill=self.COLOR_OPTIMAL,
                 width=2,
-                dash=(3, 2)
+                dash=(3, 2),
             )
 
         # Draw target max line
         if 0 <= target_max_index < self.LED_COUNT:
-            y_max = start_y + (self.LED_COUNT - 1 - target_max_index) * (self.LED_HEIGHT + self.LED_SPACING) + self.LED_HEIGHT / 2
+            y_max = (
+                start_y
+                + (self.LED_COUNT - 1 - target_max_index)
+                * (self.LED_HEIGHT + self.LED_SPACING)
+                + self.LED_HEIGHT / 2
+            )
             self.scale_canvas.create_line(
-                0, y_max,
-                self.SCALE_WIDTH, y_max,
+                0,
+                y_max,
+                self.SCALE_WIDTH,
+                y_max,
                 fill=self.COLOR_OPTIMAL,
                 width=2,
-                dash=(3, 2)
+                dash=(3, 2),
             )
 
     def _schedule_update(self) -> None:
@@ -354,7 +453,7 @@ class LEDLevelMeter(tk.Frame):
 
     def _update_from_shared_state(self) -> None:
         """Update level meter from shared state data."""
-        if not self.shared_state or getattr(self.shared_state, 'shm', None) is None:
+        if not self.shared_state or getattr(self.shared_state, "shm", None) is None:
             return
 
         # Get level meter state
@@ -365,19 +464,19 @@ class LEDLevelMeter(tk.Frame):
             return
 
         # Check if valid data
-        if level_state.get('status', 0) != SETTINGS_STATUS_VALID:
+        if level_state.get("status", 0) != SETTINGS_STATUS_VALID:
             return
 
         # Check if data has been updated
-        frame_count = level_state.get('frame_count', 0)
+        frame_count = level_state.get("frame_count", 0)
         if frame_count == self.last_frame_count:
             return
 
         self.last_frame_count = frame_count
 
         # Update levels
-        self.current_rms = level_state.get('rms_db', -60.0)
-        instant_peak = level_state.get('peak_db', -60.0)
+        self.current_rms = level_state.get("rms_db", -60.0)
+        instant_peak = level_state.get("peak_db", -60.0)
         self.current_peak = instant_peak
 
         # Update our own peak-hold behavior (simple hold + decay; never below instant peak or RMS)
@@ -405,7 +504,7 @@ class LEDLevelMeter(tk.Frame):
         rms_led_count = self._db_to_led_count(self.current_rms)
 
         # Calculate peak LED position
-        peak_led_index = self._db_to_led_count(self.current_peak) - 1
+        self._db_to_led_count(self.current_peak) - 1
 
         # Update LEDs
         for i in range(self.LED_COUNT):
@@ -419,14 +518,18 @@ class LEDLevelMeter(tk.Frame):
             if i < rms_led_count:
                 self.canvas.itemconfig(led, fill=color)
             else:
-                self.canvas.itemconfig(led, fill=self._dim_color(color, self.DIM_FACTOR))
+                self.canvas.itemconfig(
+                    led, fill=self._dim_color(color, self.DIM_FACTOR)
+                )
 
             # Show peak as brighter LED
             # No special LED for peak; peak-hold is a line
 
         # Update numeric readouts (Peak shows hold value) with color by thresholds
         rms_text = f"{self.current_rms:.1f}" if self.current_rms > -60 else "--"
-        peak_text = f"{self.peak_hold_value:.1f}" if self.peak_hold_value > -60 else "--"
+        peak_text = (
+            f"{self.peak_hold_value:.1f}" if self.peak_hold_value > -60 else "--"
+        )
         self.rms_value_label.config(text=f"{rms_text} dB")
         self.peak_value_label.config(text=f"{peak_text} dB")
 
@@ -471,7 +574,9 @@ class LEDLevelMeter(tk.Frame):
             # Choose color from the same zone mapping as LEDs (blue/green/yellow/red)
             ph_color = self._get_led_color(self.peak_hold_value)
             if self._peak_hold_line_id is None:
-                self._peak_hold_line_id = self.canvas.create_line(x0, y, x1, y, fill=ph_color, width=2)
+                self._peak_hold_line_id = self.canvas.create_line(
+                    x0, y, x1, y, fill=ph_color, width=2
+                )
             else:
                 self.canvas.coords(self._peak_hold_line_id, x0, y, x1, y)
                 self.canvas.itemconfig(self._peak_hold_line_id, fill=ph_color)
@@ -548,5 +653,10 @@ class LEDLevelMeter(tk.Frame):
             index = self._db_to_led_count(db_value) - 1
         if not (0 <= index < self.LED_COUNT):
             return None
-        y = self._geom_start_y + (self.LED_COUNT - 1 - index) * (self._geom_led_height + self._geom_spacing) + self._geom_led_height / 2
+        y = (
+            self._geom_start_y
+            + (self.LED_COUNT - 1 - index)
+            * (self._geom_led_height + self._geom_spacing)
+            + self._geom_led_height / 2
+        )
         return y

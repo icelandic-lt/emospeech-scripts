@@ -11,8 +11,16 @@ class EdgeIndicator:
     methods to show them briefly when the user pans into a boundary.
     """
 
-    def __init__(self, ax: Axes, *, color: str, linewidth: int, alpha: float,
-                 timeout_ms: int, after_call):
+    def __init__(
+        self,
+        ax: Axes,
+        *,
+        color: str,
+        linewidth: int,
+        alpha: float,
+        timeout_ms: int,
+        after_call,
+    ):
         """Initialize edge indicator controller.
 
         Args:
@@ -70,9 +78,9 @@ class EdgeIndicator:
         Args:
             side: 'left' or 'right'
         """
-        if side == 'left' and self._left_line is not None:
+        if side == "left" and self._left_line is not None:
             self._left_line.set_visible(True)
-        elif side == 'right' and self._right_line is not None:
+        elif side == "right" and self._right_line is not None:
             self._right_line.set_visible(True)
 
         if self._hide_id is not None:
@@ -93,4 +101,3 @@ class EdgeIndicator:
         if self._right_line is not None:
             self._right_line.set_visible(False)
         self._hide_id = None
-

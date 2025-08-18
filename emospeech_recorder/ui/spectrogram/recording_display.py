@@ -20,10 +20,14 @@ class RecordingDisplay:
     - Zoom and scroll for long recordings
     """
 
-    def __init__(self, clipping_detector: ClippingDetector,
-                 clipping_visualizer: ClippingVisualizer,
-                 zoom_controller: ZoomController,
-                 spec_frames: int, display_config):
+    def __init__(
+        self,
+        clipping_detector: ClippingDetector,
+        clipping_visualizer: ClippingVisualizer,
+        zoom_controller: ZoomController,
+        spec_frames: int,
+        display_config,
+    ):
         """Initialize recording display handler.
 
         Args:
@@ -44,7 +48,9 @@ class RecordingDisplay:
         self.recording_duration = 0.0
         self.max_detected_freq = 0.0
 
-    def process_recording(self, audio_data: np.ndarray, sample_rate: int) -> Tuple[np.ndarray, int, float]:
+    def process_recording(
+        self, audio_data: np.ndarray, sample_rate: int
+    ) -> Tuple[np.ndarray, int, float]:
         """Process a complete recording for display.
 
         Args:
@@ -63,13 +69,17 @@ class RecordingDisplay:
         self.clipping_visualizer.set_clipping_positions(clipping_positions)
 
         # Create adaptive mel processor for this sample rate
-        recording_mel_processor, adaptive_n_mels = self.create_recording_mel_processor(sample_rate)
+        recording_mel_processor, adaptive_n_mels = self.create_recording_mel_processor(
+            sample_rate
+        )
 
         # Process entire recording
-        n_frames = 1 + (len(audio_data) - AudioConstants.N_FFT) // AudioConstants.HOP_LENGTH
+        n_frames = (
+            1 + (len(audio_data) - AudioConstants.N_FFT) // AudioConstants.HOP_LENGTH
+        )
 
-        mel_min = float('inf')
-        mel_max = float('-inf')
+        mel_min = float("inf")
+        mel_max = float("-inf")
 
         # Compute mel spectrogram for entire recording
         mel_spec = np.zeros((adaptive_n_mels, n_frames))
@@ -90,7 +100,11 @@ class RecordingDisplay:
 
                 # Track maximum frequency
                 freq_bins_with_energy = np.where(
-                    mel_db > (AudioConstants.DB_MIN + AudioConstants.MAX_FREQ_ENERGY_THRESHOLD_DB)
+                    mel_db
+                    > (
+                        AudioConstants.DB_MIN
+                        + AudioConstants.MAX_FREQ_ENERGY_THRESHOLD_DB
+                    )
                 )[0]
                 if len(freq_bins_with_energy) > 0:
                     max_bin = freq_bins_with_energy[-1]
@@ -112,20 +126,22 @@ class RecordingDisplay:
         self.zoom_controller.reset()
 
         # Resample if needed for display
-        display_data = self.resample_spectrogram_for_display(mel_spec, n_frames, adaptive_n_mels)
+        display_data = self.resample_spectrogram_for_display(
+            mel_spec, n_frames, adaptive_n_mels
+        )
         return display_data, adaptive_n_mels, duration
 
-    def create_recording_mel_processor(self, sample_rate: int) -> Tuple[MelSpectrogramProcessor, int]:
-        """Create mel processor optimized for recording's sample rate.
-
-        """
+    def create_recording_mel_processor(
+        self, sample_rate: int
+    ) -> Tuple[MelSpectrogramProcessor, int]:
+        """Create mel processor optimized for recording's sample rate."""
         return MelProcessorFactory.create_for_sample_rate(
-            sample_rate,
-            self.display_config.fmin
+            sample_rate, self.display_config.fmin
         )
 
-    def resample_spectrogram_for_display(self, mel_spec: np.ndarray,
-                                         n_frames: int, n_mels: int) -> np.ndarray:
+    def resample_spectrogram_for_display(
+        self, mel_spec: np.ndarray, n_frames: int, n_mels: int
+    ) -> np.ndarray:
         """Resample spectrogram to fit display width if needed."""
         if n_frames != self.spec_frames:
             # Resample to fit display
@@ -134,18 +150,19 @@ class RecordingDisplay:
 
             resampled = np.zeros((n_mels, self.spec_frames))
             for i in range(n_mels):
-                f = interpolate.interp1d(x_old, mel_spec[i, :],
-                                       kind='linear', fill_value='extrapolate')
+                f = interpolate.interp1d(
+                    x_old, mel_spec[i, :], kind="linear", fill_value="extrapolate"
+                )
                 resampled[i, :] = f(x_new)
 
             return resampled
         elif mel_spec.shape[1] < self.spec_frames:
             # Pad with minimum values if needed
             padded = np.ones((n_mels, self.spec_frames)) * AudioConstants.DB_MIN
-            padded[:, :mel_spec.shape[1]] = mel_spec
+            padded[:, : mel_spec.shape[1]] = mel_spec
             return padded
         else:
-            return mel_spec[:, :self.spec_frames]
+            return mel_spec[:, : self.spec_frames]
 
     def get_visible_frames(self, start_frame: int, end_frame: int) -> List[np.ndarray]:
         """Get frames in the visible range.
@@ -175,7 +192,9 @@ class RecordingDisplay:
         frames_per_second = total_frames / self.recording_duration
 
         start_frame = int(self.zoom_controller.view_offset * frames_per_second)
-        end_frame = int((self.zoom_controller.view_offset + visible_seconds) * frames_per_second)
+        end_frame = int(
+            (self.zoom_controller.view_offset + visible_seconds) * frames_per_second
+        )
         end_frame = min(end_frame, total_frames)
 
         return start_frame, end_frame

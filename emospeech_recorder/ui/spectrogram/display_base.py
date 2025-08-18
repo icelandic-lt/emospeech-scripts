@@ -3,7 +3,6 @@
 from typing import Optional, Tuple
 import numpy as np
 import tkinter as tk
-import matplotlib
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -35,8 +34,13 @@ class SpectrogramDisplayBase:
     MIN_SPEC_FRAMES = 100  # Minimum number of spectrogram frames
     MARGIN_SCALE_FACTOR = 0.006  # Scale factor for adaptive margin calculation
 
-    def __init__(self, parent: tk.Widget, audio_config: AudioConfig,
-                 display_config: DisplayConfig, manager_dict: dict = None):
+    def __init__(
+        self,
+        parent: tk.Widget,
+        audio_config: AudioConfig,
+        display_config: DisplayConfig,
+        manager_dict: dict = None,
+    ):
         """Initialize display base.
 
         Args:
@@ -60,10 +64,14 @@ class SpectrogramDisplayBase:
 
         # Display parameters
         self.frames_per_second = audio_config.sample_rate / AudioConstants.HOP_LENGTH
-        self.spec_frames = int(UIConstants.SPECTROGRAM_DISPLAY_SECONDS * self.frames_per_second)
+        self.spec_frames = int(
+            UIConstants.SPECTROGRAM_DISPLAY_SECONDS * self.frames_per_second
+        )
         self.time_per_frame = AudioConstants.HOP_LENGTH / audio_config.sample_rate
 
-    def _init_display(self, figsize: Tuple[float, float] = None, dpi: int = None) -> None:
+    def _init_display(
+        self, figsize: Tuple[float, float] = None, dpi: int = None
+    ) -> None:
         """Initialize matplotlib display components.
 
         Args:
@@ -76,8 +84,8 @@ class SpectrogramDisplayBase:
             parent_width = self.parent.winfo_width()
             parent_height = self.parent.winfo_height()
 
-            width_inches, height_inches, calculated_dpi = self._calculate_figure_dimensions(
-                parent_width - 2, parent_height - 2
+            width_inches, height_inches, calculated_dpi = (
+                self._calculate_figure_dimensions(parent_width - 2, parent_height - 2)
             )
             figsize = (width_inches, height_inches)
             dpi = dpi or calculated_dpi
@@ -87,7 +95,7 @@ class SpectrogramDisplayBase:
             figsize=figsize,
             dpi=dpi or UIConstants.SPECTROGRAM_DPI,
             facecolor=UIConstants.COLOR_BACKGROUND,
-            constrained_layout=False
+            constrained_layout=False,
         )
 
         self.ax = self.fig.add_subplot(111)
@@ -106,7 +114,7 @@ class SpectrogramDisplayBase:
         self.canvas_widget.config(
             bg=UIConstants.COLOR_BACKGROUND,
             highlightthickness=1,
-            highlightbackground=UIConstants.COLOR_TEXT_INACTIVE
+            highlightbackground=UIConstants.COLOR_TEXT_INACTIVE,
         )
 
         # Initial draw with adaptive layout
@@ -114,24 +122,30 @@ class SpectrogramDisplayBase:
         self.canvas.draw()
 
         # Bind resize event
-        self.canvas_widget.bind('<Configure>', self._on_resize)
+        self.canvas_widget.bind("<Configure>", self._on_resize)
 
     def _configure_axes(self) -> None:
         """Configure axes appearance."""
         # Not setting x-axis label to save vertical space
-        self.ax.set_ylabel('Frequency (Hz)', color=UIConstants.COLOR_TEXT_INACTIVE,
-                          fontsize=UIConstants.AXIS_LABEL_FONTSIZE)
-        self.ax.tick_params(colors=UIConstants.COLOR_TEXT_INACTIVE,
-                           labelsize=UIConstants.AXIS_TICK_FONTSIZE)
-
+        self.ax.set_ylabel(
+            "Frequency (Hz)",
+            color=UIConstants.COLOR_TEXT_INACTIVE,
+            fontsize=UIConstants.AXIS_LABEL_FONTSIZE,
+        )
+        self.ax.tick_params(
+            colors=UIConstants.COLOR_TEXT_INACTIVE,
+            labelsize=UIConstants.AXIS_TICK_FONTSIZE,
+        )
 
         # Remove top and right spines
-        self.ax.spines['top'].set_visible(False)
-        self.ax.spines['right'].set_visible(False)
-        self.ax.spines['bottom'].set_color(UIConstants.COLOR_TEXT_INACTIVE)
-        self.ax.spines['left'].set_color(UIConstants.COLOR_TEXT_INACTIVE)
+        self.ax.spines["top"].set_visible(False)
+        self.ax.spines["right"].set_visible(False)
+        self.ax.spines["bottom"].set_color(UIConstants.COLOR_TEXT_INACTIVE)
+        self.ax.spines["left"].set_color(UIConstants.COLOR_TEXT_INACTIVE)
 
-    def _calculate_figure_dimensions(self, width_pixels: int, height_pixels: int) -> Tuple[float, float, int]:
+    def _calculate_figure_dimensions(
+        self, width_pixels: int, height_pixels: int
+    ) -> Tuple[float, float, int]:
         """Calculate optimal figure dimensions for given pixel size.
 
         Args:
@@ -142,7 +156,9 @@ class SpectrogramDisplayBase:
             Tuple of (width_inches, height_inches, dpi)
         """
         # Calculate DPI to fit the widget size
-        target_width_inches = max(UIConstants.ADAPTIVE_MARGIN_MIN_WIDTH_INCHES, width_pixels / 100)
+        target_width_inches = max(
+            UIConstants.ADAPTIVE_MARGIN_MIN_WIDTH_INCHES, width_pixels / 100
+        )
         dpi = width_pixels / target_width_inches
 
         # Limit DPI to reasonable range
@@ -164,12 +180,18 @@ class SpectrogramDisplayBase:
         Returns:
             True if figure was resized, False otherwise
         """
-        width_inches, height_inches, new_dpi = self._calculate_figure_dimensions(width_pixels, height_pixels)
+        width_inches, height_inches, new_dpi = self._calculate_figure_dimensions(
+            width_pixels, height_pixels
+        )
 
         # Check if we need to update
         current_size = self.fig.get_size_inches()
-        size_changed = (abs(current_size[0] - width_inches) > UIConstants.FIGURE_SIZE_CHANGE_THRESHOLD or
-                       abs(current_size[1] - height_inches) > UIConstants.FIGURE_SIZE_CHANGE_THRESHOLD)
+        size_changed = (
+            abs(current_size[0] - width_inches)
+            > UIConstants.FIGURE_SIZE_CHANGE_THRESHOLD
+            or abs(current_size[1] - height_inches)
+            > UIConstants.FIGURE_SIZE_CHANGE_THRESHOLD
+        )
         dpi_changed = abs(self.fig.dpi - new_dpi) > UIConstants.DPI_CHANGE_THRESHOLD
 
         if size_changed or dpi_changed:
@@ -188,7 +210,10 @@ class SpectrogramDisplayBase:
 
     def _on_resize(self, event) -> None:
         """Handle canvas resize events."""
-        if event.width > self.MIN_CANVAS_WIDTH and event.height > self.MIN_CANVAS_HEIGHT:  # Ignore tiny sizes
+        if (
+            event.width > self.MIN_CANVAS_WIDTH
+            and event.height > self.MIN_CANVAS_HEIGHT
+        ):  # Ignore tiny sizes
             # Force the canvas widget to use the full available size
             self.canvas_widget.configure(width=event.width, height=event.height)
 
@@ -201,7 +226,9 @@ class SpectrogramDisplayBase:
             # Calculate new spec_frames based on window width
             # Keep the frames_per_second constant, adjust spec_frames for display seconds
             pixels_per_frame = self.PIXELS_PER_FRAME
-            new_spec_frames = max(self.MIN_SPEC_FRAMES, int(event.width / pixels_per_frame))
+            new_spec_frames = max(
+                self.MIN_SPEC_FRAMES, int(event.width / pixels_per_frame)
+            )
 
             if self.spec_frames != new_spec_frames:
                 old_spec_frames = self.spec_frames
@@ -227,13 +254,26 @@ class SpectrogramDisplayBase:
             left_margin = UIConstants.ADAPTIVE_MARGIN_MIN
         else:
             # Linear interpolation between min and max width
-            width_range = UIConstants.ADAPTIVE_MARGIN_MAX_WIDTH_INCHES - UIConstants.ADAPTIVE_MARGIN_MIN_WIDTH_INCHES
-            margin_range = UIConstants.ADAPTIVE_MARGIN_MAX - UIConstants.ADAPTIVE_MARGIN_MIN
-            left_margin = UIConstants.ADAPTIVE_MARGIN_MAX - ((fig_width_inches - UIConstants.ADAPTIVE_MARGIN_MIN_WIDTH_INCHES) / width_range * margin_range)
+            width_range = (
+                UIConstants.ADAPTIVE_MARGIN_MAX_WIDTH_INCHES
+                - UIConstants.ADAPTIVE_MARGIN_MIN_WIDTH_INCHES
+            )
+            margin_range = (
+                UIConstants.ADAPTIVE_MARGIN_MAX - UIConstants.ADAPTIVE_MARGIN_MIN
+            )
+            left_margin = UIConstants.ADAPTIVE_MARGIN_MAX - (
+                (fig_width_inches - UIConstants.ADAPTIVE_MARGIN_MIN_WIDTH_INCHES)
+                / width_range
+                * margin_range
+            )
 
         # Use subplots_adjust to control margins precisely
-        self.fig.subplots_adjust(left=left_margin, right=UIConstants.SUBPLOT_MARGIN_RIGHT,
-                                top=UIConstants.SUBPLOT_MARGIN_TOP, bottom=UIConstants.SUBPLOT_MARGIN_BOTTOM)
+        self.fig.subplots_adjust(
+            left=left_margin,
+            right=UIConstants.SUBPLOT_MARGIN_RIGHT,
+            top=UIConstants.SUBPLOT_MARGIN_TOP,
+            bottom=UIConstants.SUBPLOT_MARGIN_BOTTOM,
+        )
 
     def _on_spec_frames_changed(self, old_frames: int, new_frames: int) -> None:
         """Called when spec_frames changes due to resize.
@@ -243,7 +283,6 @@ class SpectrogramDisplayBase:
             new_frames: New number of frames
         """
         # Hook method for subclasses to respond to spec_frames changes
-        pass
 
     def _on_figure_size_changed(self) -> None:
         """Called when figure size changes but spec_frames stays the same.
@@ -253,7 +292,6 @@ class SpectrogramDisplayBase:
         this to update their display accordingly.
         """
         # Hook method for subclasses to respond to figure size changes
-        pass
 
     def _update_time_axis_labels(self, start_time: float, end_time: float) -> None:
         """Update time axis labels.
@@ -265,13 +303,16 @@ class SpectrogramDisplayBase:
         # Update x-axis to show time range
         num_ticks = 5  # Number of time axis ticks
         xticks = np.linspace(0, self.spec_frames - 1, num=num_ticks)
-        xlabels = [f'{np.linspace(start_time, end_time, num=num_ticks)[i]:.2f}'
-                   for i in range(num_ticks)]
+        xlabels = [
+            f"{np.linspace(start_time, end_time, num=num_ticks)[i]:.2f}"
+            for i in range(num_ticks)
+        ]
         self.ax.set_xticks(xticks)
         self.ax.set_xticklabels(xlabels)
 
-    def _resample_frames_to_display(self, visible_array: np.ndarray,
-                                   n_mels: int, n_frames_visible: int) -> np.ndarray:
+    def _resample_frames_to_display(
+        self, visible_array: np.ndarray, n_mels: int, n_frames_visible: int
+    ) -> np.ndarray:
         """Resample frames to match display width.
 
         Args:
@@ -289,8 +330,9 @@ class SpectrogramDisplayBase:
         # Interpolate each mel bin
         resampled = np.zeros((n_mels, self.spec_frames))
         for i in range(n_mels):
-            f = interpolate.interp1d(x_old, visible_array[i, :],
-                                   kind='linear', fill_value='extrapolate')
+            f = interpolate.interp1d(
+                x_old, visible_array[i, :], kind="linear", fill_value="extrapolate"
+            )
             resampled[i, :] = f(x_new)
 
         return resampled

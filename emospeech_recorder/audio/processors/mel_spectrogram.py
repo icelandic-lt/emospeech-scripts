@@ -29,13 +29,15 @@ class MelSpectrogramProcessor(AudioProcessor[Tuple[np.ndarray, Optional[float]]]
         mel_filter: Pre-computed mel filterbank matrix
     """
 
-    def __init__(self,
-                 sample_rate: int = AudioConstants.DEFAULT_SAMPLE_RATE,
-                 n_fft: int = AudioConstants.N_FFT,
-                 hop_length: int = AudioConstants.HOP_LENGTH,
-                 n_mels: int = AudioConstants.N_MELS,
-                 fmin: float = AudioConstants.FMIN,
-                 fmax: float = AudioConstants.FMAX):
+    def __init__(
+        self,
+        sample_rate: int = AudioConstants.DEFAULT_SAMPLE_RATE,
+        n_fft: int = AudioConstants.N_FFT,
+        hop_length: int = AudioConstants.HOP_LENGTH,
+        n_mels: int = AudioConstants.N_MELS,
+        fmin: float = AudioConstants.FMIN,
+        fmax: float = AudioConstants.FMAX,
+    ):
         """Initialize the mel spectrogram processor.
 
         Args:
@@ -57,20 +59,16 @@ class MelSpectrogramProcessor(AudioProcessor[Tuple[np.ndarray, Optional[float]]]
         # Clamp fmax to Nyquist frequency if needed
         actual_fmax = min(fmax, sample_rate / 2)
         self.mel_filter = librosa.filters.mel(
-            sr=sample_rate,
-            n_fft=n_fft,
-            n_mels=n_mels,
-            fmin=fmin,
-            fmax=actual_fmax
+            sr=sample_rate, n_fft=n_fft, n_mels=n_mels, fmin=fmin, fmax=actual_fmax
         )
         self.actual_fmax = actual_fmax
 
         # Pre-compute mel frequencies for efficiency
         self.mel_frequencies = librosa.mel_frequencies(
-            n_mels=n_mels + 2,
-            fmin=fmin,
-            fmax=actual_fmax
-        )[1:-1]  # Remove edge bins
+            n_mels=n_mels + 2, fmin=fmin, fmax=actual_fmax
+        )[
+            1:-1
+        ]  # Remove edge bins
 
     def process(self, audio_data: np.ndarray) -> Tuple[np.ndarray, Optional[float]]:
         """Convert audio frame to mel-scale dB values and detect the highest frequency.
@@ -101,20 +99,26 @@ class MelSpectrogramProcessor(AudioProcessor[Tuple[np.ndarray, Optional[float]]]
         power = np.abs(fft) ** 2
 
         # Apply mel filterbank
-        mel_power = np.dot(self.mel_filter, power[:self.n_fft // 2 + 1])
+        mel_power = np.dot(self.mel_filter, power[: self.n_fft // 2 + 1])
 
         # Convert to dB
-        mel_db = AudioConstants.POWER_TO_DB_FACTOR * np.log10(mel_power + AudioConstants.DB_REFERENCE)
+        mel_db = AudioConstants.POWER_TO_DB_FACTOR * np.log10(
+            mel_power + AudioConstants.DB_REFERENCE
+        )
 
         # Clamp to display range (we cannot visually represent values above 0 dB)
         mel_db = np.clip(mel_db, AudioConstants.DB_MIN, 0)
 
         # Detect the highest frequency with significant energy
         # Use the raw FFT power spectrum for precise frequency detection
-        power_db = AudioConstants.POWER_TO_DB_FACTOR * np.log10(power[:self.n_fft // 2 + 1] + AudioConstants.DB_REFERENCE)
+        power_db = AudioConstants.POWER_TO_DB_FACTOR * np.log10(
+            power[: self.n_fft // 2 + 1] + AudioConstants.DB_REFERENCE
+        )
 
         # Find the highest frequency above noise floor
-        significant_bins = np.where(power_db > AudioConstants.FREQUENCY_NOISE_FLOOR_DB)[0]
+        significant_bins = np.where(power_db > AudioConstants.FREQUENCY_NOISE_FLOOR_DB)[
+            0
+        ]
 
         if len(significant_bins) > 0:
             highest_bin = significant_bins[-1]

@@ -333,7 +333,7 @@ class DeviceManager:
                 samplerate=sample_rate,
             )
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     def find_compatible_device(

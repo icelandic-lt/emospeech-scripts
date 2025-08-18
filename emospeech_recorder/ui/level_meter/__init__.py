@@ -2,8 +2,4 @@
 
 from .config import LevelMeterConfig, RecordingStandard, RECORDING_STANDARDS
 
-__all__ = [
-    'LevelMeterConfig',
-    'RecordingStandard',
-    'RECORDING_STANDARDS'
-]
+__all__ = ["LevelMeterConfig", "RecordingStandard", "RECORDING_STANDARDS"]

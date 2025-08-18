@@ -7,7 +7,7 @@ import numpy as np
 from ...constants import AudioConstants
 
 # Type variable for processor output
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class AudioProcessor(ABC, Generic[T]):
@@ -39,4 +39,3 @@ class AudioProcessor(ABC, Generic[T]):
         Returns:
             Processing result (type depends on specific processor)
         """
-        pass

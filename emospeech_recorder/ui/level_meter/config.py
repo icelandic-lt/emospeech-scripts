@@ -7,6 +7,7 @@ from typing import Dict
 
 class RecordingStandard(Enum):
     """Recording standard presets."""
+
     BROADCAST_EBU = "broadcast_ebu"
     AUDIOBOOK_ACX = "audiobook_acx"
     PODCAST = "podcast"
@@ -32,6 +33,7 @@ class LevelMeterConfig:
         show_lufs: Show LUFS measurement (for broadcast)
         noise_floor_threshold: Noise floor threshold in dBFS
     """
+
     target_min: float = -18.0
     target_max: float = -12.0
     warning_level: float = -6.0
@@ -53,7 +55,7 @@ RECORDING_STANDARDS: Dict[RecordingStandard, LevelMeterConfig] = {
         warning_level=-9.0,
         danger_level=-6.0,
         show_lufs=True,
-        rms_window_ms=400.0
+        rms_window_ms=400.0,
     ),
     RecordingStandard.AUDIOBOOK_ACX: LevelMeterConfig(
         target_min=-23.0,
@@ -61,21 +63,21 @@ RECORDING_STANDARDS: Dict[RecordingStandard, LevelMeterConfig] = {
         warning_level=-6.0,
         danger_level=-3.0,
         noise_floor_threshold=-60.0,
-        rms_window_ms=300.0
+        rms_window_ms=300.0,
     ),
     RecordingStandard.PODCAST: LevelMeterConfig(
         target_min=-16.0,
         target_max=-12.0,
         warning_level=-3.0,
         danger_level=-1.0,
-        rms_window_ms=300.0
+        rms_window_ms=300.0,
     ),
     RecordingStandard.FILM_DIALOG: LevelMeterConfig(
         target_min=-27.0,
         target_max=-20.0,
         warning_level=-10.0,
         danger_level=-6.0,
-        rms_window_ms=500.0
+        rms_window_ms=500.0,
     ),
     RecordingStandard.MUSIC_VOCAL: LevelMeterConfig(
         target_min=-18.0,
@@ -83,8 +85,8 @@ RECORDING_STANDARDS: Dict[RecordingStandard, LevelMeterConfig] = {
         warning_level=-6.0,
         danger_level=-3.0,
         rms_window_ms=300.0,
-        peak_hold_ms=3000.0
-    )
+        peak_hold_ms=3000.0,
+    ),
 }
 
 
@@ -103,6 +105,6 @@ def get_standard_description(standard: RecordingStandard) -> str:
         RecordingStandard.PODCAST: "Podcast standard (-16 to -14 LUFS)",
         RecordingStandard.FILM_DIALOG: "Film dialog recording (-27 to -20 dBFS)",
         RecordingStandard.MUSIC_VOCAL: "Music vocal recording (-18 to -12 dBFS)",
-        RecordingStandard.CUSTOM: "Custom user-defined levels"
+        RecordingStandard.CUSTOM: "Custom user-defined levels",
     }
     return descriptions.get(standard, "Unknown standard")

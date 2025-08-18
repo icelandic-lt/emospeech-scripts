@@ -1,6 +1,6 @@
 """Zoom controller for spectrogram display."""
 
-from typing import Tuple, Optional
+from typing import Tuple
 from ....constants import UIConstants
 
 
@@ -78,8 +78,13 @@ class ZoomController:
             return True
         return False
 
-    def calculate_zoom_offset(self, mouse_rel_x: float, old_visible_seconds: float,
-                             new_visible_seconds: float, time_at_mouse: float) -> float:
+    def calculate_zoom_offset(
+        self,
+        mouse_rel_x: float,
+        old_visible_seconds: float,
+        new_visible_seconds: float,
+        time_at_mouse: float,
+    ) -> float:
         """Calculate new view offset to keep time at mouse position stable.
 
         Args:
@@ -95,7 +100,9 @@ class ZoomController:
         new_offset = time_at_mouse - mouse_rel_x * new_visible_seconds
 
         # Ensure we stay within bounds
-        max_duration = self.recording_duration if self.recording_duration > 0 else float('inf')
+        max_duration = (
+            self.recording_duration if self.recording_duration > 0 else float("inf")
+        )
         if new_offset < 0:
             new_offset = 0
         elif new_offset + new_visible_seconds > max_duration:
@@ -103,7 +110,9 @@ class ZoomController:
 
         return new_offset
 
-    def apply_zoom_at_position(self, mouse_rel_x: float, zoom_in: bool, current_time: float = 0.0) -> bool:
+    def apply_zoom_at_position(
+        self, mouse_rel_x: float, zoom_in: bool, current_time: float = 0.0
+    ) -> bool:
         """Apply zoom operation at mouse position.
 
         Args:
@@ -115,7 +124,7 @@ class ZoomController:
             True if zoom was applied, False if at limit
         """
         # Get current state
-        old_zoom = self.zoom_level
+        self.zoom_level
         old_visible_seconds = self.get_visible_seconds()
 
         # Calculate time at mouse position
@@ -147,8 +156,11 @@ class ZoomController:
 
         return True
 
-    def calculate_visible_frame_range(self, frames_per_second: float,
-                                     display_seconds: float = UIConstants.SPECTROGRAM_DISPLAY_SECONDS) -> Tuple[int, int]:
+    def calculate_visible_frame_range(
+        self,
+        frames_per_second: float,
+        display_seconds: float = UIConstants.SPECTROGRAM_DISPLAY_SECONDS,
+    ) -> Tuple[int, int]:
         """Calculate the visible frame range based on current zoom and offset.
 
         Args:
@@ -172,7 +184,9 @@ class ZoomController:
         return f"Zoom: {self.zoom_level:.1f}x ({visible_seconds:.2f}s)"
 
     # --- Panning helpers ---
-    def clamp_view_offset(self, desired_offset: float, current_time: float = 0.0) -> float:
+    def clamp_view_offset(
+        self, desired_offset: float, current_time: float = 0.0
+    ) -> float:
         """Clamp a desired view offset to valid bounds.
 
         Args:

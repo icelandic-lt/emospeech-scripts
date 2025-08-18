@@ -8,8 +8,8 @@ from .manager import SessionManager
 from .models import Session, SessionConfig, SpeakerInfo
 
 __all__ = [
-    'SessionManager',
-    'Session',
-    'SessionConfig',
-    'SpeakerInfo',
+    "SessionManager",
+    "Session",
+    "SessionConfig",
+    "SpeakerInfo",
 ]
