@@ -1,10 +1,10 @@
-"""Revoxx Recorder - A tool for recording emotional speech with real-time feedback."""
+"""Revoxx Recorder - A tool for recording emotional speech."""
 
-__version__ = "2.0.0"
+__version__ = "1.0.0"
 __author__ = "Grammatek"
 
 # Only import main entry point to avoid circular imports
-__all__ = ["main", "EmoSpeechRecorder"]
+__all__ = ["main", "Revoxx"]
 
 
 def main():
@@ -16,8 +16,8 @@ def main():
 
 # Lazy import for Revoxx
 def __getattr__(name):
-    if name == "EmoSpeechRecorder":
-        from .app import EmoSpeechRecorder
+    if name == "Revoxx":
+        from .app import Revoxx
 
-        return EmoSpeechRecorder
+        return Revoxx
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

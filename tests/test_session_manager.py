@@ -10,8 +10,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from emospeech_recorder.session.manager import SessionManager
-from emospeech_recorder.session.models import SessionConfig
+from revoxx.session.manager import SessionManager
+from revoxx.session.models import SessionConfig
 
 
 class TestSessionManager(unittest.TestCase):

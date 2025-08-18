@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 
-from emospeech_recorder.session.models import Session, SessionConfig, SpeakerInfo
+from revoxx.session.models import Session, SessionConfig, SpeakerInfo
 
 
 class TestSpeakerInfo(unittest.TestCase):

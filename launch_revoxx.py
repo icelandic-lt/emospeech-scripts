@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
-"""Launcher script for EmoSpeech Recorder."""
+"""Launcher script for Revoxx."""
 
 import os
 import sys
 import platform
 
 def main():
-    """Launch EmoSpeech Recorder."""
+    """Launch Revoxx."""
     # Set the application name for macOS menu bar
     if platform.system() == 'Darwin':
         # This environment variable can help with some Python interpreters
-        os.environ['PYTHON_APP_NAME'] = 'EmoSpeech Recorder'
+        os.environ['PYTHON_APP_NAME'] = 'Revoxx'
 
         # Try to set process title
         try:
             import setproctitle
-            setproctitle.setproctitle('EmoSpeech Recorder')
+            setproctitle.setproctitle('Revoxx')
         except ImportError:
             # If setproctitle is not installed, try native method
             try:
                 import ctypes
                 libc = ctypes.CDLL('/usr/lib/libc.dylib')
-                title = b'EmoSpeech Recorder\0'
+                title = b'Revoxx\0'
                 libc.setproctitle(ctypes.c_char_p(title))
             except Exception:
                 pass
 
     # Import and run the main application
-    from emospeech_recorder.app import main as app_main
+    from revoxx.app import main as app_main
 
     # Add default arguments if none provided
     if len(sys.argv) == 1:

@@ -1,6 +1,6 @@
-# Revoxx - Professional Speech Recording Application
+# Revoxx - Speech Recording Application
 
-This repository provides a professional speech recording application and scripts for recording and post-processing of speech datasets.
+This repository provides a speech recording application and scripts for recording and post-processing of speech datasets.
 
 ![Version](https://img.shields.io/badge/Version-master-darkgreen)
 ![Python](https://img.shields.io/badge/python-3.9-blue?logo=python&logoColor=white)

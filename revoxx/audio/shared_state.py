@@ -9,7 +9,7 @@ import time
 from multiprocessing import shared_memory
 from typing import Optional, Tuple, NamedTuple
 
-from emospeech_recorder.constants import AudioConstants
+from revoxx.constants import AudioConstants
 
 
 # Status constants

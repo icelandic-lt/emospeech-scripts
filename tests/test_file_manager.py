@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from emospeech_recorder.utils.file_manager import RecordingFileManager, ScriptFileManager
+from revoxx.utils.file_manager import RecordingFileManager, ScriptFileManager
 
 
 class TestRecordingFileManager(unittest.TestCase):

@@ -7,7 +7,7 @@ import tempfile
 import shutil
 from unittest.mock import patch, MagicMock
 
-from emospeech_recorder.ui.dialogs.new_session_dialog import NewSessionDialog, NewSessionData
+from revoxx.ui.dialogs.new_session_dialog import NewSessionDialog, NewSessionData
 
 
 class TestNewSessionDialog(unittest.TestCase):
