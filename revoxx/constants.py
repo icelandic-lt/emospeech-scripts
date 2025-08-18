@@ -194,7 +194,7 @@ class KeyBindings:
     TOGGLE_MONITORING = "o"
     DELETE_RECORDING = "d"  # Used with Cmd/Ctrl modifier
     TOGGLE_FULLSCREEN = "F10"
-    SHOW_HELP = "h"
+    SHOW_HELP = "F1"  # Standard help key
     SHOW_INFO = "i"
 
     # Session management - use platform-specific modifier

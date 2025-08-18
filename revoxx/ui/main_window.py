@@ -3,8 +3,9 @@
 from typing import Optional, Callable
 import tkinter as tk
 from pathlib import Path
+import platform
 
-from ..constants import UIConstants
+from ..constants import UIConstants, KeyBindings
 from ..utils.config import RecorderConfig
 from ..utils.state import UIState, RecordingState
 from ..utils.settings_manager import SettingsManager
@@ -230,8 +231,6 @@ class MainWindow:
 
         # Session management
         # Platform-specific accelerator display
-        import platform
-
         accel_mod = "Cmd" if platform.system() == "Darwin" else "Ctrl"
 
         file_menu.add_command(
@@ -410,7 +409,7 @@ class MainWindow:
         help_menu.add_command(
             label="Keyboard Shortcuts",
             command=self._show_keyboard_shortcuts,
-            accelerator="H",
+            accelerator=KeyBindings.SHOW_HELP,
         )
         help_menu.add_separator()
         help_menu.add_command(label="About", command=self._show_about)
@@ -435,26 +434,32 @@ class MainWindow:
         text.pack(fill=tk.BOTH, expand=True)
 
         # Add shortcuts text
-        shortcuts_text = """
+        cmd_key = "Cmd" if platform.system() == "Darwin" else "Ctrl"
+
+        shortcuts_text = f"""
 RECORDING CONTROLS:
-  SPACE    Start/Stop Recording
-  P        Play Current Recording
-  D        Delete Current Recording
+  SPACE      Start/Stop Recording
+  P          Play Current Recording
+  {cmd_key}+D      Delete Current Recording (Move to Trash)
 
 NAVIGATION:
-  ↑/↓      Navigate Previous/Next Utterance
-  ←/→      Browse Takes (Previous/Next)
+  ↑/↓        Navigate Previous/Next Utterance
+  ←/→        Browse Takes (Previous/Next)
 
 DISPLAY:
-  M        Toggle Mel Spectrogram
-  L        Toggle Level Meter
-  O        Monitor Input Levels
-  F10      Toggle Fullscreen
-  I        Show Audio Info Overlay
+  M          Toggle Mel Spectrogram
+  L          Toggle Level Meter
+  O          Monitor Input Levels
+  F10        Toggle Fullscreen
+  I          Show Audio Info Overlay
+
+SESSION:
+  {cmd_key}+N      New Session
+  {cmd_key}+O      Open Session
 
 GENERAL:
-  H        Show Keyboard Shortcuts (this window)
-  Q        Quit Application
+  F1         Show Keyboard Shortcuts (this window)
+  {cmd_key}+Q      Quit Application
 """
         text.insert("1.0", shortcuts_text)
         text.config(state=tk.DISABLED)  # Make read-only
