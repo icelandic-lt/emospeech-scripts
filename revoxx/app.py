@@ -370,6 +370,7 @@ class Revoxx:
             "open_recent_session": self._open_recent_session,
             "get_recent_sessions": self._get_recent_sessions,
             "get_current_session": self._get_current_session,
+            "delete_recording": self._delete_current_recording,
             "quit": self._quit,
         }
 
@@ -413,8 +414,10 @@ class Revoxx:
         self.root.bind(
             f"<{KeyBindings.TOGGLE_MONITORING}>", lambda e: self._toggle_monitoring()
         )
+        # Delete with Cmd/Ctrl+D
+        modifier = "<Command-" if platform.system() == "Darwin" else "<Control-"
         self.root.bind(
-            f"<{KeyBindings.DELETE_RECORDING}>",
+            f"{modifier}{KeyBindings.DELETE_RECORDING}>",
             lambda e: self._delete_current_recording(),
         )
         self.root.bind(
@@ -567,8 +570,9 @@ class Revoxx:
             if not current_label:
                 return
 
-            # Increment take number and set save path
-            take_num = self.state.recording.increment_take(current_label)
+            # Get next available take number (considers trash) and update state
+            take_num = self.file_manager.get_next_take_number(current_label)
+            self.state.recording.takes[current_label] = take_num
             save_path = self.file_manager.get_recording_path(current_label, take_num)
             self.manager_dict["save_path"] = str(save_path)
         else:
@@ -889,6 +893,12 @@ class Revoxx:
         if 0 <= new_index < len(self.state.recording.utterances):
             self.state.recording.current_index = new_index
 
+            # Set to the highest available take for this utterance
+            current_label = self.state.recording.current_label
+            if current_label:
+                highest_take = self.file_manager.get_highest_take(current_label)
+                self.state.recording.set_displayed_take(current_label, highest_take)
+
             # Show saved recording if available
             self._show_saved_recording()
 
@@ -961,6 +971,13 @@ class Revoxx:
 
         current_take = self.state.recording.get_current_take(current_label)
         existing_takes = self.file_manager.get_existing_takes(current_label)
+
+        # Update label with filename if we have a recording
+        if current_take > 0:
+            filename = f"take_{current_take:03d}{FileConstants.AUDIO_FILE_EXTENSION}"
+            self.window.update_label_with_filename(current_label, filename)
+        else:
+            self.window.update_label_with_filename(current_label)
 
         if existing_takes and current_take in existing_takes:
             # Find position in the list
@@ -1301,7 +1318,7 @@ class Revoxx:
             pass
 
     def _delete_current_recording(self) -> None:
-        """Delete the current recording take."""
+        """Delete the current recording take (move to trash)."""
         # Stop any playback first
         sd.stop()
         self._stop_synchronized_playback()
@@ -1325,9 +1342,21 @@ class Revoxx:
             self.window.set_status(f"Recording file not found: {filepath.name}")
             return
 
+        # Show confirmation dialog
+        from tkinter import messagebox
+
+        result = messagebox.askyesno(
+            "Delete Recording", f"Move {filepath.name} to trash?", parent=self.root
+        )
+
+        if not result:
+            return
+
         try:
-            # Delete the file
-            filepath.unlink()
+            # Move to trash
+            if not self.file_manager.move_to_trash(current_label, current_take):
+                self.window.set_status("Failed to move recording to trash")
+                return
 
             # Update the takes count - find the highest existing take
             max_take = 0
@@ -1352,7 +1381,7 @@ class Revoxx:
             # Update display
             self._show_saved_recording()
             self._update_take_status()
-            self.window.set_status(f"Deleted {filepath.name}")
+            self.window.set_status(f"Moved {filepath.name} to trash")
 
         except Exception as e:
             self.window.set_status(f"Error deleting recording: {e}")

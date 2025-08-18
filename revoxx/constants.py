@@ -192,7 +192,7 @@ class KeyBindings:
     TOGGLE_SPECTROGRAM = ["m", "M"]
     TOGGLE_LEVEL_METER = ["l", "L"]
     TOGGLE_MONITORING = "o"
-    DELETE_RECORDING = "d"
+    DELETE_RECORDING = "d"  # Used with Cmd/Ctrl modifier
     TOGGLE_FULLSCREEN = "F10"
     SHOW_HELP = "h"
     SHOW_INFO = "i"

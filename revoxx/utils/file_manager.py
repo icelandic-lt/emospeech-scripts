@@ -108,7 +108,8 @@ class RecordingFileManager:
 
         Unlike find_latest_take(), this method finds the actual highest
         take number by scanning all files matching the label pattern,
-        even if there are gaps in the numbering.
+        even if there are gaps in the numbering. Also checks trash directory
+        to avoid conflicts when creating new recordings.
 
         Args:
             label: Script label/ID for the utterance
@@ -118,20 +119,22 @@ class RecordingFileManager:
 
         Example:
             If files exist: take_001.wav, take_003.wav, take_007.wav
-            Returns: 7
+            And in trash: take_008.wav
+            Returns: 8
         """
         utterance_dir = self.recording_dir / label
         if not utterance_dir.exists():
             return 0
 
-        # Check for both FLAC and WAV files
+        highest = 0
+
+        # Check for both FLAC and WAV files in main directory
         flac_pattern = f"take_*{FileConstants.AUDIO_FILE_EXTENSION}"
         wav_pattern = f"take_*{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}"
         files = list(utterance_dir.glob(flac_pattern)) + list(
             utterance_dir.glob(wav_pattern)
         )
 
-        highest = 0
         for file in files:
             # Extract take number from filename
             try:
@@ -142,6 +145,19 @@ class RecordingFileManager:
             except (ValueError, IndexError):
                 # Skip files that don't match expected format
                 continue
+
+        # Also check session-level trash directory to avoid conflicts
+        # trash is at session_dir/trash/<label>/
+        trash_dir = self.recording_dir.parent / "trash" / label
+        if trash_dir.exists():
+            trash_files = list(trash_dir.glob("take_*.*"))
+            for file in trash_files:
+                try:
+                    take_str = file.stem.split("_")[1]
+                    take = int(take_str)
+                    highest = max(highest, take)
+                except (ValueError, IndexError):
+                    continue
 
         return highest
 
@@ -306,6 +322,80 @@ class RecordingFileManager:
                 continue
 
         return sorted(existing_takes)
+
+    def move_to_trash(self, label: str, take: int) -> bool:
+        """Move a recording to the trash directory.
+
+        Uses the session-level trash directory structure:
+        session_dir/trash/<label>/take_XXX.ext
+
+        Args:
+            label: Script label/ID for the utterance
+            take: Take number to move
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        source_path = self.get_recording_path(label, take)
+        if not source_path.exists():
+            return False
+
+        # Use session-level trash directory
+        # recordings/../trash/<label>/
+        trash_dir = self.recording_dir.parent / "trash" / label
+        trash_dir.mkdir(exist_ok=True, parents=True)
+
+        # Keep original filename when moving to trash
+        dest_path = trash_dir / source_path.name
+
+        try:
+            source_path.rename(dest_path)
+            return True
+        except Exception:
+            return False
+
+    def get_next_take_number(self, label: str) -> int:
+        """Get the next available take number, considering both active and trash files.
+
+        This ensures no conflicts when creating new recordings.
+
+        Args:
+            label: Script label/ID for the utterance
+
+        Returns:
+            int: Next available take number (1-based)
+        """
+        utterance_dir = self.recording_dir / label
+        if not utterance_dir.exists():
+            return 1
+
+        max_take = 0
+
+        # Check active recordings
+        for pattern in [
+            f"take_*{FileConstants.AUDIO_FILE_EXTENSION}",
+            f"take_*{FileConstants.LEGACY_AUDIO_FILE_EXTENSION}",
+        ]:
+            for file in utterance_dir.glob(pattern):
+                try:
+                    take_str = file.stem.split("_")[1]
+                    take = int(take_str)
+                    max_take = max(max_take, take)
+                except (ValueError, IndexError):
+                    continue
+
+        # Also check session-level trash directory to avoid conflicts
+        trash_dir = self.recording_dir.parent / "trash" / label
+        if trash_dir.exists():
+            for file in trash_dir.glob("take_*.*"):
+                try:
+                    take_str = file.stem.split("_")[1]
+                    take = int(take_str)
+                    max_take = max(max_take, take)
+                except (ValueError, IndexError):
+                    continue
+
+        return max_take + 1
 
 
 class ScriptFileManager:

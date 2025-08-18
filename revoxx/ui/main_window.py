@@ -261,6 +261,23 @@ class MainWindow:
         )
         file_menu.add_command(label="Quit", command=quit_cmd, accelerator="Q")
 
+        # Edit menu
+        edit_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Edit", menu=edit_menu)
+
+        # Delete recording
+        delete_accel = "Cmd+D" if platform.system() == "Darwin" else "Ctrl+D"
+        delete_cmd = (
+            self.app_callbacks.get("delete_recording")
+            if self.app_callbacks and "delete_recording" in self.app_callbacks
+            else lambda: None
+        )
+        edit_menu.add_command(
+            label="Delete Recording",
+            command=delete_cmd,
+            accelerator=delete_accel,
+        )
+
         # View menu
         view_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="View", menu=view_menu)
@@ -860,6 +877,18 @@ A tool for recording (emotional) speech datasets."""
             message: Status text to display in the info bar
         """
         self.status_var.set(message)
+
+    def update_label_with_filename(self, label: str, filename: str = None) -> None:
+        """Update the label display with optional filename.
+
+        Args:
+            label: The utterance label
+            filename: Optional filename to display (e.g., "take_001.flac")
+        """
+        if filename:
+            self.label_var.set(f"{label}: {filename}")
+        else:
+            self.label_var.set(f"{label}:")
 
     def toggle_fullscreen(self) -> None:
         """Toggle fullscreen mode.

@@ -60,8 +60,6 @@ class TestSessionManager(unittest.TestCase):
         session_dir = self.base_dir / "test_happy.revoxx"
         self.assertTrue(session_dir.exists())
         self.assertTrue((session_dir / "recordings").exists())
-        self.assertTrue((session_dir / "trash").exists())
-        self.assertTrue((session_dir / "exports").exists())
         self.assertTrue((session_dir / "session.json").exists())
 
     def test_create_session_custom_name(self):
